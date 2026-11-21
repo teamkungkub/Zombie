@@ -1,4 +1,4 @@
-import { handleRoomRequest } from "../../../../lib/nightfall/room-store";
+import { handleRoomRequest } from "../../../../lib/nightfall/room-persistence";
 
 const maxBytes = 64 * 1024;
 const headers = { "Cache-Control": "no-store" };
@@ -34,6 +34,6 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Invalid JSON request." }, { status: 400, headers });
   }
-  const { body: result, status } = handleRoomRequest(input);
+  const { body: result, status } = await handleRoomRequest(input);
   return Response.json(result, { status, headers });
 }

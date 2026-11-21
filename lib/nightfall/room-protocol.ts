@@ -37,6 +37,7 @@ export type RoomWorld = {
 export type RoomView = {
   code: string;
   hostId: string;
+  round: number;
   status: "lobby" | "playing" | "ended";
   players: RoomPlayer[];
   world: RoomWorld | null;

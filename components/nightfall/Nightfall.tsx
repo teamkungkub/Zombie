@@ -244,6 +244,10 @@ export default function Nightfall() {
     lookTouch.current = null;
   }, []);
   const multiplayer = useNightfallRoom(engine, onRoomStarted, setNotice);
+  const canReplayRoom = multiplayer.room?.status === "ended" &&
+    multiplayer.room.hostId === multiplayer.session?.playerId;
+  const ownerLeftRoom = multiplayer.room?.status === "ended" &&
+    !multiplayer.room.players.some((player) => player.id === multiplayer.room?.hostId);
 
   const onSnapshot = useCallback((snapshot: Snapshot) => {
     setState(snapshot);
@@ -1152,7 +1156,11 @@ export default function Nightfall() {
                     ? "กำจัดซอมบี้ไม่ทันเวลา"
                     : "ไปถึงจุดเริ่มด่านถัดไปไม่ทันเวลา"
                 : status === "dead"
-                    ? multiplayer.session ? "ภารกิจในห้องนี้สิ้นสุดสำหรับคุณแล้ว" : "ในความเงียบ ยังมีเรื่องราวของคนที่ไม่ยอมแพ้"
+                    ? multiplayer.session
+                      ? canReplayRoom ? "เริ่มรอบใหม่ด้วยรหัสห้องเดิมได้เลย"
+                        : ownerLeftRoom ? "เจ้าของห้องออกแล้ว กดออกจากห้องเพื่อกลับเมนู"
+                        : "รอเจ้าของห้องเริ่มรอบใหม่ หรือกดออกจากห้อง"
+                      : "ในความเงียบ ยังมีเรื่องราวของคนที่ไม่ยอมแพ้"
                     : multiplayer.session ? "เพื่อนในห้องยังอยู่ในสนาม" : "สนามจะรอคุณ ทุกวินาทียังคงมีความหมาย"}
             </p>
             <div className="session-stats">
@@ -1171,19 +1179,22 @@ export default function Nightfall() {
             </div>
             <button
               className="deploy-button"
+              disabled={canReplayRoom && multiplayer.pending}
               onClick={
                 status === "dead"
-                  ? multiplayer.session ? multiplayer.leave : start
+                  ? canReplayRoom ? () => void multiplayer.command("start")
+                    : multiplayer.session ? multiplayer.leave : start
                   : () => engine.current?.resume()
               }
             >
               <Icon name={status === "dead" ? "reload" : "arrow"} />
-              <span>{status === "dead" ? multiplayer.session ? "ออกจากห้อง" : "เริ่มภารกิจใหม่" : "กลับเข้าสนาม"}</span>
+              <span>{status === "dead" ? canReplayRoom ? "เริ่มรอบใหม่ในห้องเดิม"
+                : multiplayer.session ? "ออกจากห้อง" : "เริ่มภารกิจใหม่" : "กลับเข้าสนาม"}</span>
               <Icon name="arrow" />
             </button>
             <div className="session-actions">
               <button onClick={() => openPanel("settings")}>ตั้งค่า</button>
-              {!(status === "dead" && multiplayer.session) && (
+              {(canReplayRoom || !(status === "dead" && multiplayer.session)) && (
                 <button onClick={multiplayer.session ? multiplayer.leave : () => engine.current?.menu()}>
                   {multiplayer.session ? "ออกจากห้อง" : "กลับเมนูหลัก"}
                 </button>

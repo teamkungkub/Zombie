@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { test } from "node:test";
 import type { RoomFrame, RoomPose, RoomSession, RoomWorld } from "./room-protocol.ts";
 import { createRoomStore } from "./room-store.ts";
+import { createPersistentRoomHandler, fileRoomStorage } from "./room-persistence.ts";
 
 const hostPose: RoomPose = { x: 0, y: 1.7, z: 17, yaw: 0, pitch: 0, alive: true, shot: 0 };
 const guestPose: RoomPose = { ...hostPose, x: 2 };
@@ -87,16 +91,64 @@ test("only a host owns world snapshots and enemy damage while guests can report 
   assert.equal(sync(host, { world: { ...world, finished: true } }).room.status, "ended");
 });
 
-test("a dropped host closes the shared session and stale room credentials expire", () => {
+test("a long interruption preserves the room and either player can reconnect with the same session", () => {
   const { send, create, join, sync, advance } = setup();
   const host = create();
   const guest = join(host.code);
   send({ action: "start", session: host });
-  advance(20_000);
+  sync(host, { pose: hostPose });
+  advance(60_000);
   assert.equal(sync(guest).room.status, "playing");
-  advance(12_000);
+  assert.equal(sync(guest).room.players.find(player => player.id === host.playerId)?.pose, null);
+  assert.equal(sync(host, { pose: hostPose }).room.status, "playing");
+  advance(15 * 60_000);
+  assert.deepEqual(sync(host, { pose: hostPose }).room.players.map(player => player.id), [host.playerId, guest.playerId]);
+  assert.equal(sync(guest, { pose: guestPose }).room.players.length, 2);
+  assert.equal(send({ action: "leave", session: host }).status, 200);
   assert.equal(sync(guest).room.status, "ended");
   assert.equal(send({ action: "start", session: host }).status, 404);
-  advance(30_000);
-  assert.equal(send({ action: "join", code: host.code, character: "wraith" }).status, 404);
+});
+
+test("the host can start another round in the same room and stale commands cannot end it", () => {
+  const { send, frame, create, join, sync } = setup();
+  const host = create();
+  const guest = join(host.code);
+  const first = frame({ action: "start", session: host }).room.round;
+  const finished: RoomWorld = {
+    wave: 1, timeLeft: 0, seconds: 60, kills: 0, remaining: 6,
+    gateOpen: false, checkpoint: false, finished: true, timedOut: true,
+    boss: null, zombies: [],
+  };
+  assert.equal(sync(host, { round: first, world: finished }).room.status, "ended");
+  assert.equal(send({ action: "start", session: guest }).status, 403);
+  const replay = frame({ action: "start", session: host }).room;
+  assert.equal(replay.round, first + 1);
+  assert.equal(replay.code, host.code);
+  assert.equal(replay.players.length, 2);
+  assert.equal(sync(host, { round: first, world: finished }).room.status, "playing");
+});
+
+test("a second room handler can recover persisted credentials and preserve concurrent joins", async (t) => {
+  const directory = await mkdtemp(joinPath(tmpdir(), "nightfall-room-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = createPersistentRoomHandler(fileRoomStorage(directory));
+  const opened = await first({ action: "create", character: "vanguard" }, 1000);
+  assert.ok("session" in opened.body && opened.body.session);
+  const host = opened.body.session;
+  const second = createPersistentRoomHandler(fileRoomStorage(directory));
+  const guests = await Promise.all(["wraith", "ember", "vanguard"].map((character) =>
+    second({ action: "join", character, code: host.code }, 2000),
+  ));
+  assert.ok(guests.every(guest => guest.status === 200));
+  assert.equal((await second({ action: "start", session: host }, 3000)).status, 200);
+  const sync = { action: "sync", session: host, pose: hostPose, commands: [], since: 0, round: 1 };
+  const resumed = await createPersistentRoomHandler(fileRoomStorage(directory))(sync, 15 * 60_000);
+  assert.ok("room" in resumed.body);
+  assert.equal(resumed.body.room.status, "playing");
+  assert.equal(resumed.body.room.players.length, 4);
+  assert.equal(resumed.body.room.players[0].id, host.playerId);
+  const unavailable = await createPersistentRoomHandler(null)(sync);
+  assert.equal(unavailable.status, 503);
+  assert.ok("code" in unavailable.body);
+  assert.equal(unavailable.body.code, "ROOM_STORAGE_UNAVAILABLE");
 });

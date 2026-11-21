@@ -3,7 +3,7 @@ import type { NightfallEngine } from "../../lib/nightfall/engine";
 import type { CharacterId, RoomFrame, RoomSession, RoomView } from "../../lib/nightfall/room-protocol";
 
 class RoomRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly code?: string) {
     super(message);
   }
 }
@@ -17,22 +17,24 @@ async function sendRoomRequest<T>(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
     keepalive,
   });
-  const result = await response.json();
+  const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new RoomRequestError(
-      typeof result.error === "string" ? result.error : "ติดต่อห้องไม่ได้ กรุณาลองอีกครั้ง",
-      response.status,
+      typeof result?.error === "string" ? result.error : "ติดต่อห้องไม่ได้ กรุณาลองอีกครั้ง",
+      typeof result?.code === "string" ? result.code : undefined,
     );
   }
+  if (!result) throw new RoomRequestError("ระบบห้องกำลังเชื่อมต่อใหม่");
   return result as T;
 }
 
 function sameRoster(previous: RoomView | null, next: RoomView) {
   return previous?.code === next.code &&
     previous.status === next.status &&
+    previous.round === next.round &&
     previous.hostId === next.hostId &&
     previous.players.length === next.players.length &&
     previous.players.every((player, index) => {
@@ -69,11 +71,12 @@ export function useNightfallRoom(
   }, [engine]);
 
   const consume = useCallback((frame: RoomFrame, identity: RoomSession) => {
-    const started = currentRoom.current?.status !== "playing" && frame.room.status === "playing";
+    const started = frame.room.status === "playing" &&
+      (currentRoom.current?.status !== "playing" || currentRoom.current.round !== frame.room.round);
+    engine.current?.applyRoomFrame(frame.room, identity.playerId, frame.events);
     currentRoom.current = frame.room;
     cursor.current = frame.events.reduce((last, event) => Math.max(last, event.id), cursor.current);
     setRoom((previous) => sameRoster(previous, frame.room) ? previous : frame.room);
-    engine.current?.applyRoomFrame(frame.room, identity.playerId, frame.events);
     if (started) onStarted();
   }, [engine, onStarted]);
 
@@ -103,12 +106,13 @@ export function useNightfallRoom(
           failures = 0;
         } catch (cause) {
           if (!request.signal.aborted && currentSession.current === session) {
-            if (cause instanceof RoomRequestError && [401, 403, 404, 410].includes(cause.status)) {
+            if (cause instanceof RoomRequestError && (cause.code === "ROOM_CLOSED" || cause.code === "SESSION_INVALID")) {
               clear();
               onDisconnected(cause.message);
               return;
             }
             failures++;
+            engine.current?.setRoomConnected(false);
             if (failures === 3) setError("สัญญาณห้องขาดหาย กำลังเชื่อมต่อใหม่…");
           }
         } finally {
@@ -117,30 +121,29 @@ export function useNightfallRoom(
       }
       if (!stopped) {
         const delay = currentRoom.current?.status === "playing" ? 100 : 500;
-        timer = setTimeout(tick, failures ? Math.max(delay, 400) : delay);
+        timer = setTimeout(tick, failures ? Math.min(3000, Math.max(delay, 350 * failures)) : delay);
       }
     };
+    const wake = () => {
+      if (stopped || document.hidden || syncRequest.current || commandRequest.current) return;
+      clearTimeout(timer);
+      timer = setTimeout(tick, 0);
+    };
     timer = setTimeout(tick, 0);
+    window.addEventListener("online", wake);
+    document.addEventListener("visibilitychange", wake);
     return () => {
       stopped = true;
       clearTimeout(timer);
       syncRequest.current?.abort();
+      window.removeEventListener("online", wake);
+      document.removeEventListener("visibilitychange", wake);
     };
   }, [clear, consume, engine, onDisconnected, session]);
 
   useEffect(() => {
-    const disconnect = () => {
-      const identity = currentSession.current;
-      if (identity) void sendRoomRequest({ action: "leave", session: identity }, undefined, true).catch(() => {});
-    };
-    const onPageHide = (event: PageTransitionEvent) => {
-      if (!event.persisted) disconnect();
-    };
-    window.addEventListener("pagehide", onPageHide);
     return () => {
-      window.removeEventListener("pagehide", onPageHide);
       commandRequest.current?.abort();
-      disconnect();
     };
   }, []);
 
@@ -170,7 +173,7 @@ export function useNightfallRoom(
       return true;
     } catch (cause) {
       if (!request.signal.aborted) {
-        if (identity && cause instanceof RoomRequestError && [401, 403, 404, 410].includes(cause.status)) clear();
+        if (identity && cause instanceof RoomRequestError && (cause.code === "ROOM_CLOSED" || cause.code === "SESSION_INVALID")) clear();
         setError(cause instanceof RoomRequestError ? cause.message : "เชื่อมต่อไม่ได้ กรุณาลองอีกครั้ง");
       }
       return false;

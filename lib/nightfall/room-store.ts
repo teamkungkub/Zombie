@@ -15,13 +15,13 @@ import type {
 
 const playerLimit = 4;
 const roomLimit = 128;
-const playerTimeout = 30_000;
-const roomTimeout = 300_000;
+const presenceTimeout = 45_000;
+export const abandonedRoomSeconds = 7 * 24 * 60 * 60;
 const eventLimit = 256;
 const hitCreditsMax = 28;
 
 type Member = RoomPlayer & {
-  secret: Buffer;
+  secret: string;
   lastSeen: number;
   lastCommand: number;
   hitCredits: number;
@@ -29,14 +29,15 @@ type Member = RoomPlayer & {
   events: RoomEvent[];
 };
 
-type Room = Omit<RoomView, "players"> & {
+export type StoredRoom = Omit<RoomView, "players"> & {
   members: Map<string, Member>;
   lastSeen: number;
   nextEvent: number;
 };
+type Room = StoredRoom;
 
 type JsonObject = Record<string, unknown>;
-type Reply = { status: number; body: RoomFrame | { ok: true } | { error: string } };
+export type RoomReply = { status: number; body: RoomFrame | { ok: true } | { error: string; code?: string } };
 
 function object(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -109,8 +110,8 @@ function sessionOf(value: unknown): RoomSession | null {
   return { code: value.code, playerId: value.playerId, token: value.token };
 }
 
-function fail(status: number, error: string): Reply {
-  return { status, body: { error } };
+function fail(status: number, error: string, code?: string): RoomReply {
+  return { status, body: { error, code } };
 }
 
 function end(room: Room) {
@@ -121,18 +122,19 @@ function addMember(room: Room, selected: CharacterId, now: number): RoomSession 
   const slots = new Set([...room.members.values()].map((member) => member.slot));
   const slot = [0, 1, 2, 3].find((index) => !slots.has(index))!;
   const id = randomBytes(9).toString("base64url");
-  const secret = randomBytes(24);
+  const secret = randomBytes(24).toString("base64url");
   room.members.set(id, {
     id, character: selected, slot, pose: null, secret,
     lastSeen: now, lastCommand: 0, hitCredits: hitCreditsMax, creditedAt: now, events: [],
   });
-  return { code: room.code, playerId: id, token: secret.toString("base64url") };
+  return { code: room.code, playerId: id, token: secret };
 }
 
-function frame(room: Room, member: Member, since = 0, session?: RoomSession): Reply {
+function frame(room: Room, member: Member, since = 0, session?: RoomSession): RoomReply {
   const roomView: RoomView = {
     code: room.code,
     hostId: room.hostId,
+    round: room.round,
     status: room.status,
     players: [...room.members.values()]
       .sort((a, b) => a.slot - b.slot)
@@ -198,32 +200,28 @@ function command(room: Room, member: Member, value: unknown) {
   }
 }
 
-export function createRoomStore() {
-  const rooms = new Map<string, Room>();
-
+export function createRoomStore(rooms = new Map<string, StoredRoom>(), roomCode?: string) {
   function sweep(now: number) {
     for (const [code, room] of rooms) {
-      for (const [id, member] of room.members) {
-        if (now - member.lastSeen < playerTimeout) continue;
-        room.members.delete(id);
-        if (id === room.hostId) end(room);
+      for (const member of room.members.values()) {
+        if (now - member.lastSeen >= presenceTimeout) member.pose = null;
       }
-      if (room.members.size === 0 || now - room.lastSeen >= roomTimeout) rooms.delete(code);
+      if (room.members.size === 0 || now - room.lastSeen >= abandonedRoomSeconds * 1000)
+        rooms.delete(code);
     }
   }
 
-  return function handle(payload: unknown, now = Date.now()): Reply {
+  return function handle(payload: unknown, now = Date.now()): RoomReply {
     sweep(now);
     if (!object(payload)) return fail(400, "Invalid room request.");
     if (payload.action === "create" || payload.action === "join") {
       if (!character(payload.character)) return fail(400, "เลือกตัวละครก่อนเข้าห้อง");
       if (payload.action === "create") {
         if (rooms.size >= roomLimit) return fail(503, "ห้องเต็มชั่วคราว ลองใหม่อีกครั้ง");
-        let code: string;
-        do code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-        while (rooms.has(code));
+        let code = roomCode ?? generateRoomCode();
+        while (rooms.has(code)) code = generateRoomCode();
         const room: Room = {
-          code, hostId: "", status: "lobby", world: null,
+          code, hostId: "", status: "lobby", world: null, round: 0,
           members: new Map(), lastSeen: now, nextEvent: 1,
         };
         const session = addMember(room, payload.character, now);
@@ -243,13 +241,15 @@ export function createRoomStore() {
     }
 
     const session = sessionOf(payload.session);
-    if (!session) return fail(401, "เซสชันห้องไม่ถูกต้อง");
+    if (!session) return fail(401, "เซสชันห้องไม่ถูกต้อง", "SESSION_INVALID");
     const room = rooms.get(session.code);
     const member = room?.members.get(session.playerId);
-    if (!room || !member || !timingSafeEqual(member.secret, Buffer.from(session.token, "base64url")))
-      return fail(404, "ห้องหรือเซสชันนี้หมดอายุแล้ว");
+    if (!room) return fail(404, "ห้องนี้ปิดไปแล้ว", "ROOM_CLOSED");
+    if (!member || !timingSafeEqual(Buffer.from(member.secret, "base64url"), Buffer.from(session.token, "base64url")))
+      return fail(404, "เซสชันห้องนี้ใช้ไม่ได้", "SESSION_INVALID");
 
-    member.lastSeen = room.lastSeen = now;
+    member.lastSeen = Math.max(member.lastSeen, now);
+    room.lastSeen = Math.max(room.lastSeen, now);
     const owner = room.hostId === member.id;
     switch (payload.action) {
       case "leave":
@@ -264,8 +264,17 @@ export function createRoomStore() {
         return frame(room, member);
       case "start":
         if (!owner) return fail(403, "ให้เจ้าของห้องเป็นผู้เริ่มเกม");
-        if (room.status === "ended") return fail(409, "ห้องนี้ปิดแล้ว");
-        room.status = "playing";
+        if (room.status !== "playing") {
+          room.round++;
+          room.status = "playing";
+          room.world = null;
+          for (const player of room.members.values()) {
+            player.pose = null;
+            player.events = [];
+            player.hitCredits = hitCreditsMax;
+            player.creditedAt = now;
+          }
+        }
         return frame(room, member);
       case "sync": {
         const since = payload.since;
@@ -274,6 +283,10 @@ export function createRoomStore() {
           return fail(400, "ข้อมูลผู้เล่นไม่ถูกต้อง");
         if (payload.world !== undefined && (!owner || !worldSnapshot(payload.world)))
           return fail(400, "ข้อมูลสนามไม่ถูกต้อง");
+        if (payload.round !== undefined && !integer(payload.round))
+          return fail(400, "หมายเลขรอบไม่ถูกต้อง");
+        if (payload.round !== undefined && payload.round !== room.round)
+          return frame(room, member, since);
         member.events = member.events.filter((event) => event.id > since);
         if (room.status !== "playing") return frame(room, member, since);
         if (payload.pose) member.pose = payload.pose;
@@ -294,8 +307,15 @@ export function createRoomStore() {
   };
 }
 
-const processRooms = globalThis as typeof globalThis & {
-  nightfallRoomStore?: ReturnType<typeof createRoomStore>;
-};
+export function generateRoomCode() {
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
 
-export const handleRoomRequest = processRooms.nightfallRoomStore ??= createRoomStore();
+export function roomRequestKey(payload: unknown) {
+  if (!object(payload)) return {};
+  if (payload.action === "create") return { create: true };
+  if (payload.action === "join") {
+    return { key: typeof payload.code === "string" && /^\d{6}$/.test(payload.code) ? payload.code : undefined };
+  }
+  return { key: sessionOf(payload.session)?.code };
+}

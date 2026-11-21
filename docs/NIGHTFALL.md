@@ -8,7 +8,11 @@ Run `npm install`, then `npm run dev` and open http://localhost:3000. Build with
 
 Choose **เล่นกับเพื่อน**, pick Vanguard, Wraith, or Ember, and create a room. Give the six-digit code to friends on the same game URL. The room holds up to four players. The host starts the run, and anyone can reach the green checkpoint and lead the team into the next zone. Shots can damage teammates, and cover blocks those shots just as it blocks shots at zombies.
 
-Rooms live in memory in one Node.js process. To play on a local network, run `npm run build` and `npm start -- --hostname 0.0.0.0`, then use the host machine's LAN address on each device. For friends outside the local network, use one publicly reachable Node.js instance. A restart or the host leaving closes the room. The current room store needs shared storage before it can run across multiple serverless instances.
+The game retries automatically after a network interruption and uses the same room code and session. The host can replay after game over without asking friends to join again. A host who clicks **ออกจากห้อง** closes the room. A room is eligible for cleanup after seven days without activity from any member.
+
+To play over a local network, run `npm run build` and `npm start -- --hostname 0.0.0.0`, then open the same host address on each device. The Node.js server stores rooms in `.nightfall-rooms/`, so a process restart retains them. Use one Node.js process for this file-backed setup.
+
+For Vercel, connect a Redis database shared by all instances and set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in the environment before deploying. The project also accepts `KV_REST_API_URL` and `KV_REST_API_TOKEN`. If the shared store is temporarily unavailable, the room API returns a retryable error.
 
 ## Controls
 

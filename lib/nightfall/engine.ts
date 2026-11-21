@@ -248,7 +248,8 @@ export class NightfallEngine {
   private pendingShot: WeaponId | null = null;
   private zombies: Zombie[] = [];
   private nextZombieId = 1;
-  private room: { code: string; id: string; host: boolean; slot: number } | null = null;
+  private room: { code: string; id: string; host: boolean; slot: number; round: number } | null = null;
+  private roomConnected = true;
   private roomAvatars = new RoomAvatars();
   private roomCommands: RoomCommand[] = [];
   private roomCommandId = 0;
@@ -1747,6 +1748,7 @@ export class NightfallEngine {
     if (!this.room) return { pose: null, commands: [] };
     const { x, y, z } = this.camera.position;
     return {
+      round: this.room.round,
       pose: { x, y, z, yaw: this.yaw % (Math.PI * 2), pitch: this.pitch, alive: this.state.status !== "dead", shot: this.roomShot, wave: this.state.wave },
       world: this.room.host ? this.roomWorld() : undefined,
       commands: this.roomCommands.slice(),
@@ -1757,9 +1759,16 @@ export class NightfallEngine {
     this.roomCommands = this.roomCommands.filter((command) => command.id > throughId);
   }
 
+  setRoomConnected(connected: boolean) {
+    if (!this.room) return;
+    this.roomConnected = connected;
+    if (!connected) this.trigger = this.shotQueued = false;
+  }
+
   leaveRoom() {
     if (!this.room) return;
     this.room = null;
+    this.roomConnected = true;
     this.roomCommands = [];
     this.roomCommandId = this.roomShot = 0;
     this.roomAvatars.clear();
@@ -1773,8 +1782,11 @@ export class NightfallEngine {
     if (room.status === "lobby") return;
     const member = room.players.find((player) => player.id === playerId);
     if (!member) return;
-    if (!this.room && room.status === "playing") {
-      this.room = { code: room.code, id: playerId, host: room.hostId === playerId, slot: member.slot };
+    this.roomConnected = true;
+    if (room.status === "playing" && (!this.room || this.room.round !== room.round)) {
+      this.room = { code: room.code, id: playerId, host: room.hostId === playerId, slot: member.slot, round: room.round };
+      this.roomCommands = [];
+      this.roomAvatars.clear();
       this.setCharacter(member.character);
       this.start();
     }
@@ -2095,7 +2107,7 @@ export class NightfallEngine {
     );
   }
   setFire(value: boolean) {
-    if (this.state.status !== "playing" || this.activeTime >= this.deadline)
+    if (this.state.status !== "playing" || !this.roomConnected || this.activeTime >= this.deadline)
       return;
     if (value && (this.dodge || this.knifeSwing)) return;
     const item = this.state.heldItem;
@@ -4204,15 +4216,15 @@ export class NightfallEngine {
     const frameTime = (now - (this.lastTime || now)) / 1000;
     const dt = Math.min(frameTime, 0.04);
     this.lastTime = now;
-    const playing = this.state.status === "playing";
+    const playing = this.state.status === "playing" && this.roomConnected;
     const guest = this.room && !this.room.host;
-    const hostingWhilePaused = this.room?.host && this.state.status === "paused";
+    const hostingWhilePaused = this.room?.host && this.roomConnected && this.state.status === "paused";
     const recoilDecay = Math.exp(-dt * weapons[this.state.weaponId].fireFx.recovery);
     this.recoil *= recoilDecay;
     this.recoilSway *= recoilDecay;
     if (playing || hostingWhilePaused) {
       this.elapsed += dt;
-      this.activeTime += frameTime;
+      this.activeTime += this.room ? Math.min(frameTime, 0.15) : frameTime;
       if (!guest) this.state.seconds = Math.floor(this.activeTime);
       if (playing) this.updatePlayer(dt);
       else {
@@ -4221,7 +4233,7 @@ export class NightfallEngine {
       }
     }
     const preview = this.state.status === "menu";
-    if (!guest && (this.state.status === "playing" || hostingWhilePaused || preview))
+    if (!guest && ((playing && this.state.status === "playing") || hostingWhilePaused || preview))
       this.updateZombies(dt, preview ? now / 1000 : this.elapsed, !preview);
     if (guest) {
       const blend = 1 - Math.exp(-dt * 19);
