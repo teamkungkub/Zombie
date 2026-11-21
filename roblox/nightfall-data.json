@@ -1,0 +1,1448 @@
+{
+  "schemaVersion": 1,
+  "title": "NIGHTFALL",
+  "characters": {
+    "vanguard": {
+      "name": "VANGUARD",
+      "role": "หน่วยจู่โจม",
+      "color": "#c6a365",
+      "description": "เกราะสีทองหม่นกับหมวกจู่โจม"
+    },
+    "wraith": {
+      "name": "WRAITH",
+      "role": "หน่วยลาดตระเวน",
+      "color": "#75b4ba",
+      "description": "ฮู้ดสีฟ้าหม่นกับหน้ากากลาดตระเวน"
+    },
+    "ember": {
+      "name": "EMBER",
+      "role": "ผู้รอดชีวิต",
+      "color": "#c0795e",
+      "description": "แจ็กเก็ตสีแดงอิฐกับผ้าคาดหน้า"
+    }
+  },
+  "multiplayer": {
+    "maxPlayers": 4,
+    "roomCodeLength": 6,
+    "friendlyFire": true
+  },
+  "movement": {
+    "dodge": {
+      "staminaCost": 14,
+      "seconds": 0.22,
+      "distance": 2.4,
+      "cooldownSeconds": 0.68,
+      "recoveryDelay": 0.42
+    }
+  },
+  "weaponSlots": [
+    "rifle",
+    "sidearm",
+    "shotgun",
+    "lmg",
+    "marksman"
+  ],
+  "weapons": {
+    "rifle": {
+      "name": "M4A1",
+      "caliber": "5.56 MM",
+      "capacity": 30,
+      "pack": 0,
+      "delay": 0.12,
+      "reload": 2.1,
+      "damage": 38,
+      "head": 110,
+      "pellets": 1,
+      "spread": 0.006,
+      "range": 100,
+      "kick": 0.016,
+      "auto": true,
+      "muzzle": -1.13,
+      "sight": 48,
+      "fireFx": {
+        "recovery": 19,
+        "flash": 0.046,
+        "muzzleY": 0,
+        "portZ": -0.13,
+        "caseRadius": 0.012,
+        "caseLength": 0.048
+      }
+    },
+    "sidearm": {
+      "name": "ปืนพก",
+      "caliber": "9 MM",
+      "capacity": 12,
+      "pack": 18,
+      "delay": 0.27,
+      "reload": 1.25,
+      "damage": 30,
+      "head": 85,
+      "pellets": 1,
+      "spread": 0.009,
+      "range": 45,
+      "kick": 0.012,
+      "auto": false,
+      "muzzle": -0.48,
+      "sight": 55,
+      "fireFx": {
+        "recovery": 24,
+        "flash": 0.043,
+        "muzzleY": 0.024,
+        "portZ": -0.19,
+        "caseRadius": 0.013,
+        "caseLength": 0.032
+      }
+    },
+    "shotgun": {
+      "name": "ลูกซอง",
+      "caliber": "12 GA",
+      "capacity": 6,
+      "pack": 12,
+      "delay": 0.85,
+      "reload": 0.58,
+      "damage": 23,
+      "head": 35,
+      "pellets": 7,
+      "spread": 0.115,
+      "range": 23,
+      "kick": 0.044,
+      "auto": false,
+      "muzzle": -1.13,
+      "sight": 56,
+      "fireFx": {
+        "recovery": 12,
+        "flash": 0.072,
+        "muzzleY": 0.035,
+        "portZ": -0.2,
+        "caseRadius": 0.019,
+        "caseLength": 0.066
+      }
+    },
+    "lmg": {
+      "name": "ปืนกลเบา",
+      "caliber": "LMG AMMO",
+      "capacity": 48,
+      "pack": 48,
+      "delay": 0.095,
+      "reload": 3.35,
+      "damage": 33,
+      "head": 89,
+      "pellets": 1,
+      "spread": 0.023,
+      "range": 85,
+      "kick": 0.021,
+      "auto": true,
+      "muzzle": -1.13,
+      "sight": 53,
+      "fireFx": {
+        "recovery": 17,
+        "flash": 0.053,
+        "muzzleY": 0.035,
+        "portZ": -0.22,
+        "caseRadius": 0.012,
+        "caseLength": 0.053
+      }
+    },
+    "marksman": {
+      "name": "ไรเฟิลแม่นยำ",
+      "caliber": "7.62 MM",
+      "capacity": 8,
+      "pack": 16,
+      "delay": 0.55,
+      "reload": 2.3,
+      "damage": 86,
+      "head": 175,
+      "pellets": 1,
+      "spread": 0.002,
+      "range": 120,
+      "kick": 0.031,
+      "auto": false,
+      "muzzle": -1.22,
+      "sight": 38,
+      "fireFx": {
+        "recovery": 14,
+        "flash": 0.063,
+        "muzzleY": 0.035,
+        "portZ": -0.21,
+        "caseRadius": 0.014,
+        "caseLength": 0.061
+      }
+    }
+  },
+  "reload": {
+    "shotgunShellSeconds": 0.58,
+    "animation": {
+      "magazine": {
+        "hold": 0.19,
+        "removed": 0.43,
+        "picked": 0.56,
+        "seated": 0.86
+      },
+      "shell": {
+        "picked": 0.23,
+        "align": 0.54,
+        "inserted": 0.78,
+        "release": 0.82
+      }
+    }
+  },
+  "surfaceImpacts": {
+    "markSeconds": 9,
+    "fadeSeconds": 3,
+    "maxMarks": 48,
+    "dustSeconds": 0.48,
+    "sparkSeconds": 0.22
+  },
+  "enemyTypes": {
+    "standard": {
+      "health": 100,
+      "speed": 0.9,
+      "scale": 1,
+      "damage": 1,
+      "color": "#535943",
+      "width": 1
+    },
+    "brute": {
+      "health": 250,
+      "speed": 0.73,
+      "scale": 1.45,
+      "damage": 1.6,
+      "color": "#794737",
+      "width": 1.2
+    },
+    "hunter": {
+      "health": 145,
+      "speed": 2.15,
+      "scale": 1.24,
+      "damage": 1.2,
+      "color": "#795c39",
+      "width": 0.9
+    },
+    "tank": {
+      "health": 440,
+      "speed": 0.56,
+      "scale": 1.75,
+      "damage": 2,
+      "color": "#494864",
+      "width": 1.24
+    },
+    "flier": {
+      "health": 110,
+      "speed": 1.65,
+      "scale": 0.9,
+      "damage": 0.85,
+      "color": "#49516d",
+      "width": 0.86
+    },
+    "spitter": {
+      "health": 125,
+      "speed": 0.81,
+      "scale": 1.07,
+      "damage": 1.02,
+      "color": "#657a40",
+      "width": 0.94
+    }
+  },
+  "enemyTuning": {
+    "spitterWindupSeconds": 0.92,
+    "meleeWindupSeconds": {
+      "standard": 0.7,
+      "brute": 0.84,
+      "hunter": 0.56,
+      "tank": 0.92,
+      "flier": 0.64,
+      "spitter": 0.72
+    },
+    "meleeRecoverySeconds": 0.46,
+    "gaits": {
+      "standard": {
+        "cycleDistance": 0.98,
+        "lean": 0.09,
+        "stride": 0.45,
+        "roll": 0.065,
+        "drop": 0.03,
+        "armReach": -0.87,
+        "armSwing": 0.23,
+        "asymmetry": 0.22,
+        "stepWeight": 1
+      },
+      "brute": {
+        "cycleDistance": 1.16,
+        "lean": 0.12,
+        "stride": 0.59,
+        "roll": 0.125,
+        "drop": 0.073,
+        "armReach": -0.42,
+        "armSwing": 0.43,
+        "asymmetry": 0.08,
+        "stepWeight": 1.7
+      },
+      "hunter": {
+        "cycleDistance": 1.3,
+        "lean": 0.47,
+        "stride": 0.94,
+        "roll": 0.047,
+        "drop": -0.067,
+        "armReach": -0.38,
+        "armSwing": 0.87,
+        "asymmetry": 0.05,
+        "stepWeight": 0.72
+      },
+      "tank": {
+        "cycleDistance": 0.88,
+        "lean": 0.045,
+        "stride": 0.29,
+        "roll": 0.152,
+        "drop": 0.059,
+        "armReach": -0.29,
+        "armSwing": 0.14,
+        "asymmetry": 0.1,
+        "stepWeight": 2
+      },
+      "flier": {
+        "cycleDistance": 1,
+        "lean": 0.19,
+        "stride": 0,
+        "roll": 0,
+        "drop": 0,
+        "armReach": -0.31,
+        "armSwing": 0,
+        "asymmetry": 0,
+        "stepWeight": 0
+      },
+      "spitter": {
+        "cycleDistance": 0.79,
+        "lean": 0.23,
+        "stride": 0.36,
+        "roll": 0.086,
+        "drop": 0.036,
+        "armReach": -0.69,
+        "armSwing": 0.14,
+        "asymmetry": 0.38,
+        "stepWeight": 0.88
+      }
+    },
+    "melee": {
+      "standard": {
+        "style": "swipe",
+        "trigger": 1.29,
+        "reach": 1.52,
+        "arc": 0.55
+      },
+      "brute": {
+        "style": "slam",
+        "trigger": 1.46,
+        "reach": 1.65,
+        "arc": 0.28
+      },
+      "hunter": {
+        "style": "pounce",
+        "trigger": 2.55,
+        "reach": 1.52,
+        "arc": 0.55
+      },
+      "tank": {
+        "style": "shove",
+        "trigger": 1.29,
+        "reach": 1.52,
+        "arc": 0.72
+      },
+      "flier": {
+        "style": "dive",
+        "trigger": 1.29,
+        "reach": 1.52,
+        "arc": 0.62
+      },
+      "spitter": {
+        "style": "bite",
+        "trigger": 1.29,
+        "reach": 1.38,
+        "arc": 0.56
+      }
+    },
+    "hunterPounce": {
+      "duration": 0.26,
+      "maxDistance": 3.35,
+      "radius": 0.64
+    }
+  },
+  "bosses": {
+    "slam": {
+      "name": "ผู้พิทักษ์กักกัน",
+      "warning": "ทุบพื้น · ออกจากวงแดง",
+      "body": "brute",
+      "color": "#dc684e",
+      "health": 480,
+      "reach": 3.5,
+      "width": 3.5,
+      "windup": 0.95,
+      "damage": 25,
+      "cooldown": 2.1
+    },
+    "charge": {
+      "name": "นักล่ารางเหล็ก",
+      "warning": "กำลังพุ่งชน · หลบออกด้านข้าง",
+      "body": "hunter",
+      "color": "#ffbd62",
+      "health": 560,
+      "reach": 12,
+      "width": 1.35,
+      "windup": 1.05,
+      "damage": 30,
+      "cooldown": 2.25
+    },
+    "mortar": {
+      "name": "ยักษ์เตาหลอม",
+      "warning": "ลูกไฟกำลังตก · ออกจากวงสีส้ม",
+      "body": "tank",
+      "color": "#ff873f",
+      "health": 690,
+      "reach": 18,
+      "width": 2.9,
+      "windup": 1.35,
+      "damage": 29,
+      "cooldown": 2.35
+    },
+    "spores": {
+      "name": "แม่พันธุ์สปอร์",
+      "warning": "พ่นสปอร์ · ออกจากกรวยสีม่วง",
+      "body": "brute",
+      "color": "#e7a1fd",
+      "health": 620,
+      "reach": 9,
+      "width": 0.55,
+      "windup": 1.05,
+      "damage": 31,
+      "cooldown": 2.15
+    }
+  },
+  "zones": [
+    {
+      "name": "ลานกักกัน",
+      "code": "QUARANTINE",
+      "sky": "#737e7a",
+      "ground": "#484b45",
+      "light": "#ffe3b5",
+      "exitX": 0,
+      "weapon": "sidearm",
+      "boss": "slam",
+      "checkpoint": {
+        "x": 0,
+        "z": -20.5
+      }
+    },
+    {
+      "name": "สถานีรถไฟร้าง",
+      "code": "RAIL DEPOT",
+      "sky": "#667c8d",
+      "ground": "#424b55",
+      "light": "#b4d8ff",
+      "exitX": -6,
+      "weapon": "shotgun",
+      "boss": "charge",
+      "checkpoint": {
+        "x": -6,
+        "z": -20.5
+      }
+    },
+    {
+      "name": "โรงหล่อเหล็ก",
+      "code": "FOUNDRY",
+      "sky": "#987965",
+      "ground": "#51463c",
+      "light": "#ffb076",
+      "exitX": 6,
+      "weapon": "lmg",
+      "boss": "mortar",
+      "checkpoint": {
+        "x": 6,
+        "z": -20.5
+      }
+    },
+    {
+      "name": "สวนพฤกษศาสตร์",
+      "code": "CONSERVATORY",
+      "sky": "#789688",
+      "ground": "#405149",
+      "light": "#c6edce",
+      "exitX": 0,
+      "weapon": "marksman",
+      "boss": "spores",
+      "checkpoint": {
+        "x": 0,
+        "z": -20.5
+      }
+    }
+  ],
+  "gateZ": -23,
+  "ammoDrops": {
+    "chance": 0.2,
+    "roundsByWeapon": {
+      "rifle": 3,
+      "sidearm": 2,
+      "shotgun": 1,
+      "lmg": 4,
+      "marksman": 1
+    }
+  },
+  "equipment": {
+    "order": [
+      "gun",
+      "grenade",
+      "medkit",
+      "energy"
+    ],
+    "limits": {
+      "grenade": 3,
+      "medkit": 2,
+      "energy": 2
+    },
+    "knife": {
+      "staminaCost": 9,
+      "hitSeconds": 0.17,
+      "swingSeconds": 0.52,
+      "reach": 1.75,
+      "damage": 48,
+      "staggerSeconds": 0.26,
+      "pushback": 0.55
+    },
+    "healAmount": 35,
+    "healingSeconds": 1.5,
+    "injectionTiming": {
+      "liftEnd": 0.33,
+      "contact": 0.58,
+      "pressEnd": 1.06,
+      "withdrawEnd": 1.28
+    },
+    "boostSeconds": 10,
+    "drinkingSeconds": 1.8,
+    "drinkOpeningSeconds": 0.42,
+    "throwChargeSeconds": 1
+  },
+  "referenceStages": {
+    "recruit": [
+      {
+        "enemies": [
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard"
+        ],
+        "ammo": 70,
+        "time": 120,
+        "bossKind": "slam",
+        "bossHealth": 394,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard"
+        ],
+        "ammo": 89,
+        "time": 117,
+        "bossKind": "charge",
+        "bossHealth": 478,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "standard",
+          "standard",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 130,
+        "time": 114,
+        "bossKind": "mortar",
+        "bossHealth": 611,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "standard",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "hunter",
+          "brute",
+          "standard"
+        ],
+        "ammo": 149,
+        "time": 111,
+        "bossKind": "spores",
+        "bossHealth": 569,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 164,
+        "time": 108,
+        "bossKind": "slam",
+        "bossHealth": 457,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter"
+        ],
+        "ammo": 240,
+        "time": 105,
+        "bossKind": "charge",
+        "bossHealth": 551,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 267,
+        "time": 102,
+        "bossKind": "mortar",
+        "bossHealth": 702,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard"
+        ],
+        "ammo": 279,
+        "time": 99,
+        "bossKind": "spores",
+        "bossHealth": 651,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank"
+        ],
+        "ammo": 305,
+        "time": 96,
+        "bossKind": "slam",
+        "bossHealth": 520,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 327,
+        "time": 93,
+        "bossKind": "charge",
+        "bossHealth": 625,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 336,
+        "time": 90,
+        "bossKind": "mortar",
+        "bossHealth": 792,
+        "bossTime": 65
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 334,
+        "time": 87,
+        "bossKind": "spores",
+        "bossHealth": 732,
+        "bossTime": 65
+      }
+    ],
+    "survivor": [
+      {
+        "enemies": [
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard",
+          "standard"
+        ],
+        "ammo": 59,
+        "time": 95,
+        "bossKind": "slam",
+        "bossHealth": 480,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "standard",
+          "standard",
+          "standard",
+          "hunter",
+          "standard",
+          "standard"
+        ],
+        "ammo": 88,
+        "time": 92,
+        "bossKind": "charge",
+        "bossHealth": 582,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "standard",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "hunter"
+        ],
+        "ammo": 109,
+        "time": 89,
+        "bossKind": "mortar",
+        "bossHealth": 745,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "spitter",
+          "brute",
+          "standard"
+        ],
+        "ammo": 128,
+        "time": 86,
+        "bossKind": "spores",
+        "bossHealth": 694,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 160,
+        "time": 83,
+        "bossKind": "slam",
+        "bossHealth": 557,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter"
+        ],
+        "ammo": 196,
+        "time": 80,
+        "bossKind": "charge",
+        "bossHealth": 672,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 219,
+        "time": 77,
+        "bossKind": "mortar",
+        "bossHealth": 856,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard"
+        ],
+        "ammo": 227,
+        "time": 74,
+        "bossKind": "spores",
+        "bossHealth": 794,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank"
+        ],
+        "ammo": 247,
+        "time": 71,
+        "bossKind": "slam",
+        "bossHealth": 634,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 266,
+        "time": 68,
+        "bossKind": "charge",
+        "bossHealth": 762,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 276,
+        "time": 65,
+        "bossKind": "mortar",
+        "bossHealth": 966,
+        "bossTime": 55
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 272,
+        "time": 62,
+        "bossKind": "spores",
+        "bossHealth": 893,
+        "bossTime": 55
+      }
+    ],
+    "veteran": [
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "standard",
+          "standard",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 57,
+        "time": 75,
+        "bossKind": "slam",
+        "bossHealth": 566,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "standard",
+          "standard",
+          "hunter",
+          "standard",
+          "standard"
+        ],
+        "ammo": 72,
+        "time": 72,
+        "bossKind": "charge",
+        "bossHealth": 687,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "brute",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "spitter"
+        ],
+        "ammo": 90,
+        "time": 69,
+        "bossKind": "mortar",
+        "bossHealth": 879,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard"
+        ],
+        "ammo": 122,
+        "time": 66,
+        "bossKind": "spores",
+        "bossHealth": 819,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 127,
+        "time": 63,
+        "bossKind": "slam",
+        "bossHealth": 657,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter"
+        ],
+        "ammo": 154,
+        "time": 60,
+        "bossKind": "charge",
+        "bossHealth": 793,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter"
+        ],
+        "ammo": 173,
+        "time": 57,
+        "bossKind": "mortar",
+        "bossHealth": 1010,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard"
+        ],
+        "ammo": 179,
+        "time": 55,
+        "bossKind": "spores",
+        "bossHealth": 936,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank"
+        ],
+        "ammo": 193,
+        "time": 55,
+        "bossKind": "slam",
+        "bossHealth": 748,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 208,
+        "time": 55,
+        "bossKind": "charge",
+        "bossHealth": 899,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 217,
+        "time": 55,
+        "bossKind": "mortar",
+        "bossHealth": 1140,
+        "bossTime": 45
+      },
+      {
+        "enemies": [
+          "tank",
+          "hunter",
+          "flier",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "tank",
+          "flier",
+          "spitter",
+          "brute",
+          "standard",
+          "standard",
+          "hunter",
+          "tank",
+          "spitter",
+          "standard",
+          "hunter",
+          "standard",
+          "standard",
+          "flier",
+          "tank",
+          "standard",
+          "standard"
+        ],
+        "ammo": 214,
+        "time": 55,
+        "bossKind": "spores",
+        "bossHealth": 1054,
+        "bossTime": 45
+      }
+    ]
+  }
+}
