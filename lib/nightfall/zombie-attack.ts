@@ -11,6 +11,11 @@ export const zombieMelee = {
 
 export const hunterPounce = { duration: 0.26, maxDistance: 3.35, radius: 0.64 } as const;
 
+export function hunterPounceMotion(progress: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  return { travel: t * t * (3 - 2 * t), lift: 4 * t * (1 - t) };
+}
+
 export function hunterPounceHits(x: number, z: number, endX: number, endZ: number, playerX: number, playerZ: number) {
   const dx = endX - x;
   const dz = endZ - z;

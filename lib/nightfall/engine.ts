@@ -3,13 +3,18 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { dodgeDistanceAt, dodgeTuning, movementInWorld } from "./movement";
 import { impactSurfaceOf, SurfaceEffects, type ImpactSurface } from "./surface-effects";
 import { ZombieModels, zombieRigHeight } from "./zombie-models";
-import { advanceZombieGait, zombieGaitPose, zombieGaits } from "./zombie-motion";
-import { hunterPounce, hunterPounceHits, zombieMelee } from "./zombie-attack";
+import {
+  advanceZombieGait, blendZombieMotion, steerZombieVelocity, turnZombieToward, zombieFallMotion,
+  zombieCrawl, zombieCrawlThreshold, zombieCrawlTransition, zombieGaitPose, zombieGaits,
+  zombieImpactDirection, zombieImpactMotion, zombieLocalImpact, type ZombieMotion,
+} from "./zombie-motion";
+import { hunterPounce, hunterPounceHits, hunterPounceMotion, zombieMelee } from "./zombie-attack";
 import { InjectorView } from "./injector-view";
 import { WeaponHands } from "./weapon-hands";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion";
 import { RoomAvatars } from "./room-avatars";
-import { characters, type CharacterId, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomView, type RoomWorld, type RoomZombie } from "./room-protocol";
+import { RenderBudget, renderPixelLimit } from "./render-quality";
+import { characters, type CharacterId, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomView, type RoomWorld, type RoomZombie, type ZombieGunImpact, type ZombieHitZone } from "./room-protocol";
 import {
   boostSeconds,
   drinkingSeconds,
@@ -73,10 +78,12 @@ export type Settings = {
   sensitivity: number;
   volume: number;
   quality: boolean;
+  prefer120: boolean;
   difficulty: Difficulty;
 };
 export type Snapshot = {
   status: GameStatus;
+  fps: number | null;
   health: number;
   ammo: number;
   reserve: number;
@@ -153,7 +160,7 @@ type Zombie = {
   legs: THREE.Group[];
   head: THREE.Group;
   rig: THREE.Group;
-  gait: { phase: number; travel: number; weight: number };
+  gait: { phase: number; travel: number; weight: number; vx: number; vz: number; heading?: number };
   speed: number;
   attack: number;
   dead: number;
@@ -162,11 +169,22 @@ type Zombie = {
   throat?: THREE.Mesh;
   spitAt?: number;
   spitReleasedAt?: number;
-  deathHeight?: number;
+  death?: { start: ZombieMotion; fallSpeed: number; landed: boolean };
   hitAt?: number;
   hitForce?: number;
+  hitLean?: number;
+  hitRoll?: number;
+  hitPitch?: number;
+  hitTwist?: number;
+  lastImpact?: ZombieGunImpact;
+  hitLocal?: ReturnType<typeof zombieLocalImpact>;
+  injuredLeg?: -1 | 1;
+  limp?: number;
+  legHits?: number;
+  crawl?: { fall: { pose: ZombieMotion; startedAt: number } | null };
   tumbleSign?: number;
   airFallSpeed?: number;
+  airFallAt?: number;
   groundedUntil?: number;
   knifeStagger?: { until: number; x: number; z: number };
   melee?: ZombieMelee;
@@ -186,6 +204,7 @@ type Boss = {
 
 const initial: Snapshot = {
   status: "menu",
+  fps: null,
   health: 100,
   ammo: 30,
   reserve: 0,
@@ -254,7 +273,8 @@ export class NightfallEngine {
   private roomCommands: RoomCommand[] = [];
   private roomCommandId = 0;
   private roomShot = 0;
-  private roomZombieTargets = new Map<number, THREE.Vector3>();
+  private roomZombieTargets = new Map<number, { from: ZombieMotion; to: ZombieMotion; age: number; duration: number }>();
+  private lastRoomMotion: { stamp?: number; received: number } | null = null;
   private roomNavigation = new Map<string, NavigationField>();
   private combatTarget: { id: string; eye: THREE.Vector3 } | null = null;
   private roomBossMarker: { key: string; mesh: THREE.Group } | null = null;
@@ -277,6 +297,7 @@ export class NightfallEngine {
     sensitivity: 1,
     volume: 65,
     quality: true,
+    prefer120: false,
     difficulty: "survivor",
   };
   private yaw = 0;
@@ -338,6 +359,8 @@ export class NightfallEngine {
   private elapsed = 0;
   private lastTime = 0;
   private lastSnapshot = 0;
+  private fpsWindowStart: number | null = null;
+  private fpsFrameCount = 0;
   private frame = 0;
   private destroyed = false;
   private audio: AudioContext | null = null;
@@ -362,8 +385,29 @@ export class NightfallEngine {
   private impacts: { mesh: THREE.Mesh; life: number }[] = [];
   private dust!: THREE.Points;
   private materials = new Map<string, THREE.MeshStandardMaterial>();
+  private renderBudget = new RenderBudget();
+  private lastShadow = -Infinity;
+  private shadowFrame = false;
+  private staticShadows = false;
+  private viewport = { width: 1, height: 1 };
+  private contactShadows: THREE.InstancedMesh<
+    THREE.PlaneGeometry, THREE.MeshBasicMaterial
+  >;
+  private contactTransform = new THREE.Matrix4();
+
+  private applyRenderScale() {
+    const { width, height } = this.viewport;
+    const target = renderPixelLimit(width, height, window.devicePixelRatio, this.coarse, this.settings.quality);
+    const ratio = Math.max(0.3, target * this.renderBudget.scale);
+    if (Math.abs(ratio - this.renderer.getPixelRatio()) > 0.01) this.renderer.setPixelRatio(ratio);
+  }
+
   private resize = () => {
     const { width, height } = this.host.getBoundingClientRect();
+    if (width < 1 || height < 1 || (this.viewport.width === width && this.viewport.height === height)) return;
+    this.viewport = { width, height };
+    this.renderBudget.reset();
+    this.applyRenderScale();
     this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
@@ -378,10 +422,9 @@ export class NightfallEngine {
       antialias: true,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(
-      Math.min(devicePixelRatio, this.coarse ? 1.25 : 1.75),
-    );
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
@@ -394,6 +437,8 @@ export class NightfallEngine {
     this.scene.fog = new THREE.FogExp2("#737e7a", 0.024);
     this.scene.add(this.world);
     this.scene.add(this.roomAvatars.root);
+    this.contactShadows = this.createContactShadows();
+    this.scene.add(this.contactShadows);
     this.scene.add(this.camera);
     this.scene.add(new THREE.HemisphereLight("#cad5cf", "#34372c", 2.2));
     this.camera.rotation.order = "YXZ";
@@ -502,14 +547,66 @@ export class NightfallEngine {
     return plane;
   }
 
+  private createContactShadows() {
+    const size = 32;
+    const pixels = new Uint8Array(size * size * 4).fill(255);
+    for (let z = 0; z < size; z++) {
+      for (let x = 0; x < size; x++) {
+        const dx = ((x + 0.5) / size) * 2 - 1;
+        const dz = ((z + 0.5) / size) * 2 - 1;
+        pixels[(z * size + x) * 4 + 3] = Math.round(255 * Math.max(0, 1 - dx * dx - dz * dz) ** 2);
+      }
+    }
+    const map = new THREE.DataTexture(pixels, size, size);
+    map.magFilter = map.minFilter = THREE.LinearFilter;
+    map.needsUpdate = true;
+    const geometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const material = new THREE.MeshBasicMaterial({
+      color: "#171b18", map, transparent: true, opacity: 0.4, depthWrite: false,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, 32);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    return mesh;
+  }
+
+  private setStaticShadows(enabled: boolean) {
+    if (enabled === this.staticShadows) return;
+    this.staticShadows = enabled;
+    for (const zombie of this.zombies) {
+      zombie.group.traverse((part) => {
+        if (part instanceof THREE.Mesh) part.castShadow = !enabled;
+      });
+    }
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  private updateContactShadows() {
+    let count = 0;
+    for (const zombie of this.zombies) {
+      const { position, visible, scale } = zombie.group;
+      if (!visible || position.y > 0.85) continue;
+      const size = 1 - Math.max(0, position.y) * 0.85;
+      const down = zombie.health <= 0 || zombie.crawl;
+      this.contactTransform.makeScale(scale.x * size * 1.25, 1, scale.z * size * (down ? 1.7 : 1));
+      this.contactTransform.setPosition(position.x, 0.029, position.z);
+      this.contactShadows.setMatrixAt(count++, this.contactTransform);
+      if (count === this.contactShadows.instanceMatrix.count) break;
+    }
+    this.contactShadows.count = count;
+    if (count) this.contactShadows.instanceMatrix.needsUpdate = true;
+  }
+
   private createWorld() {
     const zone = zoneForStage(this.arenaStage);
     this.scene.background = new THREE.Color(zone.sky);
     this.scene.fog = new THREE.FogExp2(zone.sky, 0.024);
+    this.renderer.shadowMap.needsUpdate = true;
     const sun = new THREE.DirectionalLight(zone.light, 3.2);
     sun.position.set(-22, 32, -24);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.setScalar(this.coarse ? 1024 : 1536);
     sun.shadow.camera.left = -38;
     sun.shadow.camera.right = 38;
     sun.shadow.camera.top = 38;
@@ -522,6 +619,12 @@ export class NightfallEngine {
     canvas.width = canvas.height = 512;
     const ctx = canvas.getContext("2d")!;
     ctx.fillStyle = zone.ground;
+    ctx.fillRect(0, 0, 512, 512);
+    const wear = ctx.createRadialGradient(245, 268, 28, 245, 268, 345);
+    wear.addColorStop(0, "#cebfae48");
+    wear.addColorStop(0.56, "#8c826b14");
+    wear.addColorStop(1, "#221f1b45");
+    ctx.fillStyle = wear;
     ctx.fillRect(0, 0, 512, 512);
     let seed = 137 + this.arenaStage * 7919;
     const random = () => {
@@ -556,6 +659,7 @@ export class NightfallEngine {
     groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
     groundTexture.repeat.set(18, 18);
     groundTexture.colorSpace = THREE.SRGBColorSpace;
+    groundTexture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(220, 220),
       new THREE.MeshStandardMaterial({ map: groundTexture, roughness: 0.87 }),
@@ -578,23 +682,21 @@ export class NightfallEngine {
         );
         line.castShadow = false;
       }
-      for (let i = 0; i < 30; i++) {
-        const puddle = new THREE.Mesh(
-          new THREE.CircleGeometry(0.7 + random() * 2, 24),
-          new THREE.MeshStandardMaterial({
-            color: "#697a79",
-            metalness: 0.65,
-            roughness: 0.17,
-            transparent: true,
-            opacity: 0.38,
-          }),
-        );
-        puddle.rotation.x = -Math.PI / 2;
+      const puddleMaterial = new THREE.MeshStandardMaterial({
+        color: "#697a79", metalness: 0.65, roughness: 0.17, transparent: true, opacity: 0.38,
+      });
+      const puddles = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 24), puddleMaterial, 30);
+      const puddle = new THREE.Object3D();
+      puddle.rotation.x = -Math.PI / 2;
+      for (let i = 0; i < puddles.count; i++) {
+        const radius = 0.7 + random() * 2;
         puddle.rotation.z = random() * 6;
-        puddle.scale.y = 0.25 + random() * 0.3;
+        puddle.scale.set(radius, radius * (0.25 + random() * 0.3), 1);
         puddle.position.set(random() * 52 - 26, 0.016, random() * 52 - 26);
-        this.world.add(puddle);
+        puddle.updateMatrix();
+        puddles.setMatrixAt(i, puddle.matrix);
       }
+      this.world.add(puddles);
 
       this.building(-20, -8, 11, 11, 34, "#737970");
       this.building(20, -16, 11, 15, 24, "#6d736b");
@@ -662,26 +764,21 @@ export class NightfallEngine {
     }
 
     // Chain-link fence, perimeter lights, power lines and distant skyline.
+    const fencePositions: number[] = [];
     for (let x = -28; x <= 28; x += 4) {
       this.cylinder(0.055, 3.8, "#555e52", x, 1.9, 27);
       if (x < 28) {
         for (let y = 0.3; y < 3.5; y += 0.28) {
-          const line = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([
-              new THREE.Vector3(x, y, 27),
-              new THREE.Vector3(x + 4, y + 1.1, 27),
-            ]),
-            new THREE.LineBasicMaterial({
-              color: "#5d6659",
-              transparent: true,
-              opacity: 0.65,
-            }),
-          );
-          this.world.add(line);
+          fencePositions.push(x, y, 27, x + 4, y + 1.1, 27);
         }
         this.box(4, 0.035, 0.04, "#555e52", x + 2, 3.4, 27);
       }
     }
+    const fence = new THREE.BufferGeometry();
+    fence.setAttribute("position", new THREE.Float32BufferAttribute(fencePositions, 3));
+    this.world.add(new THREE.LineSegments(
+      fence, new THREE.LineBasicMaterial({ color: "#5d6659", transparent: true, opacity: 0.65 }),
+    ));
     for (const [x, z] of [
       [-13, -24],
       [14, 2],
@@ -736,6 +833,7 @@ export class NightfallEngine {
           z,
         );
         paper.rotation.y = random() * 6;
+        paper.castShadow = false;
       } else {
         const rock = this.box(
           0.04 + random() * 0.12,
@@ -747,6 +845,7 @@ export class NightfallEngine {
           z,
         );
         rock.rotation.y = random() * 6;
+        rock.castShadow = false;
       }
     }
     const dustPositions = new Float32Array(250 * 3);
@@ -960,6 +1059,7 @@ export class NightfallEngine {
     const shared = new Set(this.materials.values());
     this.world.traverse((object) => {
       if (object instanceof THREE.DirectionalLight) object.shadow.dispose();
+      if (object instanceof THREE.InstancedMesh) object.dispose();
       if (!(
         object instanceof THREE.Mesh ||
         object instanceof THREE.Line ||
@@ -993,7 +1093,7 @@ export class NightfallEngine {
         return;
       const material = object.material;
       const surface = impactSurfaceOf(object);
-      const key = `${material.uuid}:${surface}`;
+      const key = `${material.uuid}:${surface}:${object.castShadow}`;
       const batch = batches.get(key) ?? { material, surface, meshes: [] };
       batch.meshes.push(object);
       batches.set(key, batch);
@@ -1006,7 +1106,7 @@ export class NightfallEngine {
       if (merged) {
         const combined = new THREE.Mesh(merged, material);
         combined.userData.impactSurface = surface;
-        combined.castShadow = true;
+        combined.castShadow = meshes[0].castShadow;
         combined.receiveShadow = true;
         this.world.add(combined);
         for (const mesh of meshes) {
@@ -1657,6 +1757,11 @@ export class NightfallEngine {
     const stats = enemyTypes[kind];
     const model = this.zombieModels.create(kind, networkId % 2);
     const { group } = model;
+    if (this.staticShadows) {
+      group.traverse((part) => {
+        if (part instanceof THREE.Mesh) part.castShadow = false;
+      });
+    }
     group.scale.set(stats.scale * stats.width, stats.scale, stats.scale * stats.width);
     group.position.set(x, kind === "flier" ? 2.65 : 0, z);
     this.world.add(group);
@@ -1666,7 +1771,7 @@ export class NightfallEngine {
       networkId,
       health: stats.health,
       phase,
-      gait: { phase: phase / (Math.PI * 2), travel: 0, weight: 0 },
+      gait: { phase: phase / (Math.PI * 2), travel: 0, weight: 0, vx: 0, vz: 0 },
       speed: stats.speed * (0.9 + Math.random() * 0.2),
       attack: 0,
       dead: 0,
@@ -1687,16 +1792,15 @@ export class NightfallEngine {
   }
 
   configure(settings: Settings) {
+    const qualityChanged = settings.quality !== this.settings.quality;
+    if (qualityChanged || settings.prefer120 !== this.settings.prefer120) this.renderBudget.reset();
     this.settings = settings;
     if (this.master) this.master.gain.value = settings.volume / 100;
-    this.renderer.setPixelRatio(
-      Math.min(
-        devicePixelRatio,
-        settings.quality ? (this.coarse ? 1.25 : 1.75) : 1,
-      ),
-    );
-    this.renderer.shadowMap.enabled = settings.quality;
-    this.resize();
+    if (qualityChanged) {
+      this.renderer.shadowMap.enabled = settings.quality;
+      this.renderer.shadowMap.needsUpdate = true;
+      this.applyRenderScale();
+    }
   }
 
   start() {
@@ -1802,7 +1906,7 @@ export class NightfallEngine {
         const zombie = this.zombies.find((candidate) => candidate.networkId === event.target);
         if (!zombie || zombie.health <= 0) continue;
         const origin = this.roomAvatars.players.get(event.source)?.eye ?? this.camera.position;
-        this.hitZombie(zombie, event.amount, false, origin);
+        this.hitZombie(zombie, event.amount, event.impact?.zone === "head", origin, event.impact);
         if (zombie.health <= 0) this.defeat(zombie);
       }
     }
@@ -1815,6 +1919,7 @@ export class NightfallEngine {
     const { wave, timeLeft, seconds, kills, remaining, gateOpen, timedOut, boss } = this.state;
     const round = (n: number) => Math.round(n * 1000) / 1000;
     return {
+      motionTime: round(this.elapsed),
       wave, timeLeft, seconds, kills, remaining, gateOpen, timedOut,
       checkpoint: !!this.checkpoint,
       finished: this.state.status === "dead",
@@ -1826,19 +1931,25 @@ export class NightfallEngine {
       bolts: this.spitBolts.map(({ mesh: { position: p } }) => ({ x: round(p.x), y: round(p.y), z: round(p.z) })),
       zombies: this.zombies.filter((z) => z.group.visible).map((z) => ({
         id: z.networkId, kind: z.kind, health: Math.max(0, round(z.health)),
-        x: round(z.group.position.x), y: round(z.group.position.y), z: round(z.group.position.z),
-        yaw: round(z.group.rotation.y), scale: round(z.group.scale.y),
-        pose: [
-          z.group.rotation.x, z.group.rotation.z,
-          z.rig.rotation.x, z.rig.rotation.y, z.rig.rotation.z, z.rig.position.y,
-          z.head.rotation.x, z.head.rotation.y, z.head.rotation.z,
-          z.arms[0].rotation.x, z.arms[0].rotation.z, z.arms[1].rotation.x, z.arms[1].rotation.z,
-          z.legs[0].rotation.x, z.legs[1].rotation.x,
-          z.wings?.[0]?.rotation.z ?? 0, z.wings?.[1]?.rotation.z ?? 0,
-          z.throat?.scale.x ?? 1,
-        ].map(round),
+        scale: round(z.group.scale.y), ...this.captureZombieMotion(z, round),
       })),
     };
+  }
+
+  private captureZombieMotion(z: Zombie, round?: (value: number) => number): ZombieMotion {
+    const { x, y, z: depth } = z.group.position;
+    const pose = [
+      z.group.rotation.x, z.group.rotation.z,
+      z.rig.rotation.x, z.rig.rotation.y, z.rig.rotation.z, z.rig.position.y,
+      z.head.rotation.x, z.head.rotation.y, z.head.rotation.z,
+      z.arms[0].rotation.x, z.arms[0].rotation.z, z.arms[1].rotation.x, z.arms[1].rotation.z,
+      z.legs[0].rotation.x, z.legs[1].rotation.x,
+      z.wings?.[0]?.rotation.z ?? 0, z.wings?.[1]?.rotation.z ?? 0, z.throat?.scale.x ?? 1,
+    ];
+    const yaw = z.group.rotation.y % (Math.PI * 2);
+    return round
+      ? { x: round(x), y: round(y), z: round(depth), yaw: round(yaw), pose: pose.map(round) }
+      : { x, y, z: depth, yaw, pose };
   }
 
   private applyRoomWorld(world: RoomWorld) {
@@ -1860,6 +1971,11 @@ export class NightfallEngine {
     if (this.checkpoint) this.checkpoint.visible = !gateOpen;
     this.syncRoomBossMarker(boss?.kind, world.bossStrike);
     this.syncRoomBolts(world.bolts ?? []);
+    const last = this.lastRoomMotion;
+    if (!world.finished && world.motionTime !== undefined && last?.stamp === world.motionTime) return;
+    const received = performance.now();
+    const duration = last ? THREE.MathUtils.clamp((received - last.received) / 1000, 0.08, 0.24) : 0.12;
+    this.lastRoomMotion = { stamp: world.motionTime, received };
     const incoming = new Set(world.zombies.map((z) => z.id));
     this.zombies = this.zombies.filter((z) => {
       if (incoming.has(z.networkId)) return true;
@@ -1869,7 +1985,7 @@ export class NightfallEngine {
     });
     const existing = new Map(this.zombies.map((z) => [z.networkId, z]));
     this.state.spitWarning = false;
-    for (const frame of world.zombies) this.applyRoomZombie(frame, existing.get(frame.id));
+    for (const frame of world.zombies) this.applyRoomZombie(frame, existing.get(frame.id), duration);
   }
 
   private syncRoomBossMarker(kind?: BossKind, strike?: BossStrike) {
@@ -1894,29 +2010,32 @@ export class NightfallEngine {
       this.roomCommands.push({ ...command, id: ++this.roomCommandId });
   }
 
-  private playerDamageZombie(zombie: Zombie, damage: number, headshot: boolean, origin: THREE.Vector3, weapon: WeaponId | "knife" | "grenade") {
+  private playerDamageZombie(zombie: Zombie, damage: number, headshot: boolean, origin: THREE.Vector3, weapon: WeaponId | "knife" | "grenade", impact?: ZombieGunImpact) {
     if (this.room && !this.room.host) {
-      this.queueRoomCommand({ type: "hit-zombie", target: zombie.networkId, weapon, amount: damage });
+      this.queueRoomCommand({ type: "hit-zombie", target: zombie.networkId, weapon, amount: damage, impact });
     } else {
-      this.hitZombie(zombie, damage, headshot, origin);
+      this.hitZombie(zombie, damage, headshot, origin, impact);
     }
   }
 
-  private applyRoomZombie(frame: RoomZombie, previous?: Zombie) {
+  private applyRoomZombie(frame: RoomZombie, previous: Zombie | undefined, duration: number) {
     const zombie = previous ?? this.zombie(frame.x, frame.z, frame.kind, frame.id);
     if (previous && zombie.health > 0 && frame.health <= 0) {
       this.dropAmmo(zombie.group.position);
       this.dropLoot(zombie.group.position);
     }
     zombie.health = frame.health;
-    if (!previous) zombie.group.position.set(frame.x, frame.y, frame.z);
-    let target = this.roomZombieTargets.get(frame.id);
-    if (!target) {
-      target = new THREE.Vector3();
-      this.roomZombieTargets.set(frame.id, target);
-    }
-    target.set(frame.x, frame.y, frame.z);
     zombie.group.scale.set(frame.scale * enemyTypes[frame.kind].width, frame.scale, frame.scale * enemyTypes[frame.kind].width);
+    if (previous) {
+      this.roomZombieTargets.set(frame.id, { from: this.captureZombieMotion(zombie), to: frame, age: 0, duration });
+    } else this.renderZombieMotion(zombie, frame);
+    if (frame.pose[17] > 1.2 && zombie.health > 0 &&
+      zombie.group.position.distanceToSquared(this.camera.position) <= 18 ** 2)
+      this.state.spitWarning = true;
+  }
+
+  private renderZombieMotion(zombie: Zombie, frame: ZombieMotion) {
+    zombie.group.position.set(frame.x, frame.y, frame.z);
     const [rx, rz, rigX, rigY, rigZ, rigHeight, hx, hy, hz, a0, az0, a1, az1, l0, l1, w0, w1, throat] = frame.pose;
     zombie.group.rotation.set(rx, frame.yaw, rz);
     zombie.rig.rotation.set(rigX, rigY, rigZ);
@@ -1931,8 +2050,6 @@ export class NightfallEngine {
       zombie.wings[1].rotation.z = w1;
     }
     zombie.throat?.scale.setScalar(throat);
-    if (throat > 1.2 && zombie.health > 0 && target.distanceToSquared(this.camera.position) <= 18 ** 2)
-      this.state.spitWarning = true;
   }
 
   resume() {
@@ -1946,6 +2063,7 @@ export class NightfallEngine {
   pause() {
     if (this.state.status !== "playing") return;
     this.state.status = "paused";
+    this.resetFps();
     this.trigger = false;
     this.shotQueued = false;
     this.cancelUse();
@@ -2204,7 +2322,8 @@ export class NightfallEngine {
         const position = zombie.group.position;
         const dx = position.x - origin.x, dz = position.z - origin.z;
         if (!meleeStrikeHits(this.yaw + Math.PI, dx, dz, knifeTuning.reach)) continue;
-        const point = position.clone().add(new THREE.Vector3(0, 1.12 * zombie.group.scale.y, 0));
+        const height = Math.min(1.12, zombie.rig.position.y + 0.32);
+        const point = position.clone().add(new THREE.Vector3(0, height * zombie.group.scale.y, 0));
         const direction = point.clone().sub(origin);
         const distance = direction.length();
         if (distance > knifeTuning.reach + 0.1 || distance < 0.001 ||
@@ -2563,7 +2682,11 @@ export class NightfallEngine {
   private defeat(zombie: Zombie) {
     const defeatedBoss = this.boss?.zombie === zombie;
     zombie.dead = this.elapsed;
-    zombie.deathHeight = zombie.group.position.y;
+    zombie.death = {
+      start: this.captureZombieMotion(zombie),
+      fallSpeed: zombie.airFallSpeed ?? 0,
+      landed: false,
+    };
     zombie.spitAt = undefined;
     zombie.melee = undefined;
     this.state.kills++;
@@ -2733,7 +2856,7 @@ export class NightfallEngine {
       const fraction = Math.min(1, (this.elapsed - startedAt) / 0.3);
       p.x = strike.x + strike.dx * strike.length * fraction;
       p.z = strike.z + strike.dz * strike.length * fraction;
-      zombie.group.rotation.y = Math.atan2(strike.dx, strike.dz);
+      zombie.gait.heading = Math.atan2(strike.dx, strike.dz);
       if (fraction === 1) {
         this.impact(p.clone().setY(0.27), spec.color, 0.55);
         boss.dash = null;
@@ -2751,7 +2874,7 @@ export class NightfallEngine {
       ).material.opacity = 0.32 + Math.max(0, progress) * 0.36;
       if (kind === "mortar")
         marker.children[1].position.y = 0.2 + 5.8 * Math.max(0, 1 - progress);
-      zombie.group.rotation.y = Math.atan2(strike.dx, strike.dz);
+      zombie.gait.heading = Math.atan2(strike.dx, strike.dz);
       if (this.elapsed < resolvesAt) return;
       this.removeMarker(marker);
       boss.attack = null;
@@ -2814,7 +2937,7 @@ export class NightfallEngine {
       return;
     }
     if (!inRange || (distance > 2.2 && kind !== "mortar"))
-      this.moveZombie(zombie, (kind === "charge" ? 1.45 : 1.06) * dt);
+      this.moveZombie(zombie, kind === "charge" ? 1.45 : 1.06, dt);
   }
 
   private hurtPlayer(damage: number) {
@@ -2986,6 +3109,7 @@ export class NightfallEngine {
           (obstacle) => obstacle !== this.gateLock,
         );
         this.gateLock = null;
+        this.renderer.shadowMap.needsUpdate = true;
       }
       this.state.checkpointDistance = Math.ceil(
         Math.hypot(player.x - zone.exitX, player.z - GATE_Z),
@@ -3065,6 +3189,7 @@ export class NightfallEngine {
     for (const z of this.zombies) this.world.remove(z.group);
     this.zombies = [];
     this.roomZombieTargets.clear();
+    this.lastRoomMotion = null;
   }
 
   private shoot() {
@@ -3100,7 +3225,7 @@ export class NightfallEngine {
     ];
     this.world.updateMatrixWorld(true);
     this.roomAvatars.root.updateMatrixWorld(true);
-    const damage = new Map<Zombie, { amount: number; headshot: boolean }>();
+    const damage = new Map<Zombie, { amount: number; headshot: boolean; strongest: number; impact: ZombieGunImpact }>();
     const friendlyDamage = new Map<string, number>();
     const surfaceCues = new Set<ImpactSurface>();
     for (let pellet = 0; pellet < weapon.pellets; pellet++) {
@@ -3135,11 +3260,12 @@ export class NightfallEngine {
       }
       if (pellet < 3) this.impact(hit.point, "#8a6950", 0.09);
       const previous = damage.get(zombie);
+      const usePellet = !previous || dealt > previous.strongest;
       damage.set(zombie, {
-        amount:
-          (previous?.amount ?? 0) +
-          dealt,
+        amount: (previous?.amount ?? 0) + dealt,
         headshot: headshot || !!previous?.headshot,
+        strongest: usePellet ? dealt : previous.strongest,
+        impact: usePellet ? this.zombieGunImpact(zombie, hit) : previous.impact,
       });
     }
     if (damage.size || friendlyDamage.size) this.sound("hit");
@@ -3149,7 +3275,7 @@ export class NightfallEngine {
       this.state.message = "ยิงโดนเพื่อนร่วมทีม";
     }
     for (const [zombie, hit] of damage) {
-      this.playerDamageZombie(zombie, hit.amount, hit.headshot, this.camera.position, this.state.weaponId);
+      this.playerDamageZombie(zombie, hit.amount, hit.headshot, this.camera.position, this.state.weaponId, hit.impact);
       this.state.hit = Math.max(this.state.hit, hit.headshot ? 2 : 1);
       if (zombie.health > 0) continue;
       this.state.message = hit.headshot
@@ -3306,16 +3432,30 @@ export class NightfallEngine {
     this.muzzle.visible = false;
   }
 
+  private zombieGunImpact(zombie: Zombie, hit: THREE.Intersection): ZombieGunImpact {
+    const part = hit.object.userData.zombieZone as ZombieHitZone | undefined;
+    let zone = part ?? "body";
+    if (hit.object.userData.head) zone = "head";
+    else if ((zone === "left-shoulder" || zone === "right-shoulder") &&
+      hit.object.worldToLocal(hit.point.clone()).y < -0.25) zone = "body";
+    const { x, z } = this.raycaster.ray.direction;
+    return { zone, ...zombieImpactDirection(x, z, zombie.group.rotation.y) };
+  }
+
   private hitZombie(
     zombie: Zombie,
     damage: number,
     headshot: boolean,
     origin: THREE.Vector3,
+    impact?: ZombieGunImpact,
   ) {
     const { position, rotation } = zombie.group;
-    const lateral =
-      (origin.x - position.x) * Math.cos(rotation.y) -
-      (origin.z - position.z) * Math.sin(rotation.y);
+    const direction = zombie.lastImpact = impact ?? {
+      zone: headshot ? "head" : "body",
+      ...zombieImpactDirection(position.x - origin.x, position.z - origin.z, rotation.y),
+    };
+    const local = zombie.hitLocal = zombieLocalImpact(direction.x, direction.z, rotation.y);
+    const lateral = -local.sideways;
     zombie.tumbleSign =
       Math.abs(lateral) > 0.1
         ? Math.sign(lateral)
@@ -3324,12 +3464,29 @@ export class NightfallEngine {
           : 1;
     zombie.hitAt = this.elapsed;
     zombie.hitForce = (headshot ? 1.36 : 0.95) / Math.sqrt(zombie.group.scale.y);
+    if (direction.zone === "left-leg") zombie.injuredLeg = -1;
+    else if (direction.zone === "right-leg") zombie.injuredLeg = 1;
     zombie.health -= damage;
+    if ((direction.zone === "left-leg" || direction.zone === "right-leg") && zombie.health > 0 &&
+      !zombie.crawl && this.boss?.zombie !== zombie) {
+      zombie.legHits = (zombie.legHits ?? 0) + 1;
+      if (zombie.legHits >= zombieCrawlThreshold(zombie.kind)) {
+        const airborne = zombie.kind === "flier" && position.y > 0;
+        zombie.crawl = { fall: airborne ? null : { pose: this.captureZombieMotion(zombie), startedAt: this.elapsed } };
+        zombie.melee = undefined;
+        zombie.spitAt = undefined;
+        zombie.throat?.scale.setScalar(1);
+      }
+    }
     if (zombie.kind === "flier" && zombie.health > 0) {
       zombie.melee = undefined;
-      zombie.airFallSpeed ??= 2.1;
-      if (zombie.groundedUntil !== undefined)
+      if (position.y > 0 && zombie.airFallSpeed === undefined) {
+        zombie.airFallAt = this.elapsed;
+        zombie.airFallSpeed = 0.35;
+        zombie.groundedUntil = undefined;
+      } else if (zombie.groundedUntil !== undefined) {
         zombie.groundedUntil = this.elapsed + 0.8;
+      }
     }
   }
 
@@ -3531,8 +3688,8 @@ export class NightfallEngine {
       if (panner) finish(ring, now + 0.19);
     } else if (kind === "fall") {
       const proximity = 1 / (1 + distance * 0.12);
-      thump(95, 0.12 * proximity, 0.14);
-      texture(470, 0.16 * proximity, 0.13);
+      thump(95 / Math.sqrt(stepWeight), 0.12 * proximity * stepWeight, 0.14 * Math.sqrt(stepWeight));
+      texture(470, 0.16 * proximity * Math.sqrt(stepWeight), 0.13);
     } else if (kind === "reload" || kind === "gear") {
       texture(kind === "reload" ? 2300 : 1250, 0.13, 0.08, 0, "bandpass");
       texture(3200, 0.075, 0.07, 0.045, "bandpass");
@@ -3720,7 +3877,7 @@ export class NightfallEngine {
     }
     for (const z of this.zombies) {
       if (z.health <= 0) {
-        this.animateZombieDeath(z, dt);
+        this.animateZombieDeath(z);
         continue;
       }
       const p = z.group.position;
@@ -3733,14 +3890,26 @@ export class NightfallEngine {
       const dx = player.x - p.x,
         dz = player.z - p.z,
         distance = Math.hypot(dx, dz);
-      z.group.rotation.y = Math.atan2(dx, dz);
       const gait = z.gait;
+      z.group.rotation.y = turnZombieToward(
+        z.group.rotation.y,
+        z.melee?.yaw ?? gait.heading ?? (distance > 0.01 ? Math.atan2(dx, dz) : z.group.rotation.y),
+        dt,
+      );
+      gait.heading = undefined;
+      if (gait.travel < 0.001) {
+        const resistance = Math.exp(-dt * 16);
+        gait.vx *= resistance;
+        gait.vz *= resistance;
+      }
+      const crawlSpeed = Math.min(zombieCrawl.maxSpeed, z.speed * zombieCrawl.speedRatio);
       gait.weight = THREE.MathUtils.lerp(
-        gait.weight, Math.min(1, gait.travel / Math.max(0.001, dt * z.speed)),
+        gait.weight, Math.min(1, gait.travel / Math.max(0.001, dt * (z.crawl ? crawlSpeed : z.speed))),
         1 - Math.exp(-dt * 14),
       );
       gait.travel = 0;
-      const pose = zombieGaitPose(z.kind, gait.phase, gait.weight);
+      z.limp = THREE.MathUtils.lerp(z.limp ?? 0, z.injuredLeg ?? 0, 1 - Math.exp(-dt * 8));
+      const pose = zombieGaitPose(z.kind, gait.phase, gait.weight, z.kind === "flier" ? 0 : z.limp);
       const idle = Math.sin(time * 2.4 + z.phase);
       z.rig.rotation.set(pose.lean, 0, pose.roll);
       z.rig.position.y = zombieRigHeight + pose.height;
@@ -3749,19 +3918,40 @@ export class NightfallEngine {
       z.arms[0].rotation.x = pose.leftArm + idle * 0.06;
       z.arms[1].rotation.x = pose.rightArm - idle * 0.05;
       z.arms[0].rotation.z = z.arms[1].rotation.z = 0;
-      const flinch =
-        zombieHitAmount(time - (z.hitAt ?? -1)) * (z.hitForce ?? 1);
-      const hitSide = z.tumbleSign ?? 1;
-      z.group.rotation.x = -0.38 * flinch;
-      z.group.rotation.z = idle * 0.023 + hitSide * 0.3 * flinch;
+      const impact = zombieImpactMotion(time - (z.hitAt ?? -1)) * (z.hitForce ?? 1);
+      const response = 1 - Math.exp(-dt * 21);
+      const flinch = z.hitLean = THREE.MathUtils.lerp(z.hitLean ?? 0, impact, response);
+      const direction = z.lastImpact;
+      const local = z.hitLocal ?? { forward: -1, sideways: 0 };
+      const shoulder = direction?.zone === "left-shoulder" ? -1 :
+        direction?.zone === "right-shoulder" ? 1 : 0;
+      const torque = shoulder * (local.forward > 0 ? 1 : -1) *
+        (0.52 + Math.abs(local.forward) * 0.45) + local.sideways * 0.28;
+      const hitTwist = z.hitTwist = THREE.MathUtils.lerp(z.hitTwist ?? 0, impact * torque, response);
+      const hitRoll = z.hitRoll = THREE.MathUtils.lerp(
+        z.hitRoll ?? 0,
+        impact * (-local.sideways * 0.84 + shoulder * 0.26),
+        response,
+      );
+      z.hitPitch = THREE.MathUtils.lerp(z.hitPitch ?? 0, impact * local.forward, response);
+      z.group.rotation.x = 0.38 * z.hitPitch;
+      z.group.rotation.z = idle * 0.023 + hitRoll * 0.42;
+      z.rig.rotation.y += hitTwist * 0.52;
       z.head.rotation.set(
         idle * 0.05 - flinch * 0.36 - pose.lean * 0.45,
-        idle * 0.065 + hitSide * flinch * 0.42,
-        -pose.roll * 0.65 + hitSide * flinch * 0.18,
+        idle * 0.065 + hitRoll * 0.42,
+        -pose.roll * 0.65 + hitRoll * 0.18,
       );
-      z.arms[0].rotation.x -= flinch * 0.56;
-      z.arms[1].rotation.x += flinch * 0.37;
+      z.rig.position.y -= flinch * 0.06;
+      z.arms[0].rotation.x -= flinch * 0.30 + Math.max(0, hitTwist) * 0.42;
+      z.arms[1].rotation.x += flinch * 0.25 + Math.max(0, -hitTwist) * 0.42;
       if (!playing) continue;
+      let readyToCrawl = false;
+      if (z.crawl) {
+        if (!z.crawl.fall && this.updateFlierFall(z, dt) && p.y > 0) continue;
+        z.crawl.fall ??= { pose: this.captureZombieMotion(z), startedAt: this.elapsed };
+        readyToCrawl = this.poseCrawl(z, z.crawl.fall);
+      }
       const stagger = z.knifeStagger;
       if (stagger && this.elapsed < stagger.until) {
         const duration = knifeTuning.staggerSeconds;
@@ -3771,12 +3961,20 @@ export class NightfallEngine {
         const x = p.x + stagger.x * step;
         const nextZ = p.z + stagger.z * step;
         if (clearSegment(p.x, p.z, x, nextZ, this.obstacles)) p.set(x, p.y, nextZ);
-        z.legs[0].rotation.x = 0.38 * remaining;
-        z.legs[1].rotation.x = -0.24 * remaining;
-        if (z.kind === "flier") this.updateFlierFall(z, dt);
+        if (!z.crawl) {
+          z.legs[0].rotation.x = 0.38 * remaining;
+          z.legs[1].rotation.x = -0.24 * remaining;
+          if (z.kind === "flier") this.updateFlierFall(z, dt);
+        }
         continue;
       }
       z.knifeStagger = undefined;
+      if (z.crawl) {
+        if (readyToCrawl && !this.updateMelee(z, distance, true))
+          this.moveZombie(z, crawlSpeed, dt);
+        if (this.state.health === 0) break;
+        continue;
+      }
       if (this.boss?.zombie === z) {
         this.updateBoss(this.boss, dt);
         continue;
@@ -3794,7 +3992,7 @@ export class NightfallEngine {
           wing.rotation.z = i === 0 ? -flap : flap;
         });
         if (!this.updateMelee(z, distance, p.y < 1))
-          this.moveZombie(z, z.speed * dt);
+          this.moveZombie(z, z.speed, dt);
         if (this.state.health === 0) break;
         continue;
       }
@@ -3818,19 +4016,48 @@ export class NightfallEngine {
         const speed =
           z.speed *
           difficulty *
-          (1 + Math.min(this.state.wave, 12) * 0.09) *
-          dt;
-        this.moveZombie(z, speed);
+          (1 + Math.min(this.state.wave, 12) * 0.09);
+        this.moveZombie(z, speed, dt);
       }
     }
     this.combatTarget = null;
+  }
+
+  private poseCrawl(zombie: Zombie, fall: { pose: ZombieMotion; startedAt: number }) {
+    const seconds = this.elapsed - fall.startedAt;
+    const { lower, brace } = zombieCrawlTransition(seconds);
+    const reach = Math.sin(zombie.gait.phase * Math.PI * 2) * zombie.gait.weight;
+    const side = zombie.injuredLeg ?? 1;
+    const standing = this.captureZombieMotion(zombie);
+    const motion = blendZombieMotion(
+      { ...fall.pose, x: standing.x, z: standing.z, yaw: standing.yaw },
+      {
+        ...standing, y: 0,
+        pose: [
+          standing.pose[0] * 0.24, standing.pose[1] * 0.32,
+          1.44 - Math.abs(reach) * 0.07, standing.pose[3] * 0.4, reach * 0.14,
+          zombieCrawl.rigHeight + Math.abs(reach) * 0.038,
+          -1.03, reach * 0.09, 0.22 * reach,
+          -2.57 - reach * 0.34, -0.12, -2.57 + reach * 0.34, 0.12,
+          -0.08 + reach * 0.11, 0.08 - reach * 0.11,
+          -0.81, 0.81, 1,
+        ],
+      },
+      lower,
+    );
+    motion.pose[5] -= brace * 0.16;
+    motion.pose[4] += brace * side * 0.20;
+    motion.pose[13] -= brace * (side < 0 ? 0.42 : 0.17);
+    motion.pose[14] -= brace * (side > 0 ? 0.42 : 0.17);
+    this.renderZombieMotion(zombie, motion);
+    return lower === 1;
   }
 
   private updateMelee(zombie: Zombie, distance: number, lowEnough: boolean) {
     const p = zombie.group.position,
       player = this.combatTarget?.eye ?? this.camera.position;
     const scale = enemyTypes[zombie.kind].scale;
-    const profile = zombieMelee[zombie.kind];
+    const profile = zombie.crawl ? zombieCrawl.melee : zombieMelee[zombie.kind];
     const reach = profile.reach * scale;
     if (!zombie.melee) {
       if (
@@ -3859,9 +4086,8 @@ export class NightfallEngine {
     }
     const swing = zombie.melee;
     const elapsed = this.elapsed - swing.startedAt;
-    const windup = meleeWindupSeconds[zombie.kind];
+    const windup = zombie.crawl ? zombieCrawl.melee.windup : meleeWindupSeconds[zombie.kind];
     const impactEnd = windup + (swing.lunge ? hunterPounce.duration : 0);
-    zombie.group.rotation.y = swing.yaw;
     this.poseMelee(zombie, swing.side, elapsed, windup, impactEnd);
     if (swing.lunge) {
       this.advanceHunterPounce(zombie, swing, swing.lunge, (elapsed - windup) / hunterPounce.duration);
@@ -3870,7 +4096,7 @@ export class NightfallEngine {
       this.playSpatialCue(profile.style === "slam" ? "enemy-slam" : "enemy-swing", p, distance);
       if (
         lowEnough &&
-        Math.abs(player.y - 1.7 - p.y) < 1.35 &&
+        Math.abs(player.y - 1.7 - p.y) < (zombie.crawl ? 0.72 : 1.35) &&
         meleeStrikeHits(swing.yaw, player.x - p.x, player.z - p.z, reach, profile.arc) &&
         clearSegment(p.x, p.z, player.x, player.z, this.obstacles)
       )
@@ -3888,39 +4114,51 @@ export class NightfallEngine {
     const wind = smooth(elapsed, 0, windup * 0.81);
     const strike = smooth(elapsed, windup - 0.14, windup);
     const blend = wind * (1 - smooth(elapsed, impactEnd + 0.07, impactEnd + meleeRecoverySeconds));
+    const follow = Math.sin(Math.PI * smooth(elapsed, impactEnd, impactEnd + 0.23)) * blend;
     const arm = zombie.arms[side].rotation;
     const other = zombie.arms[1 - side].rotation;
     const sign = side === 0 ? -1 : 1;
     const lerp = THREE.MathUtils.lerp;
-    switch (zombieMelee[zombie.kind].style) {
+    switch (zombie.crawl ? zombieCrawl.melee.style : zombieMelee[zombie.kind].style) {
+      case "crawl":
+        arm.x = lerp(arm.x, lerp(-2.01, -2.92, strike), blend);
+        arm.z = sign * lerp(0.38, 0.06, strike) * blend;
+        other.x = lerp(other.x, -2.48, blend);
+        zombie.rig.rotation.z += sign * (-0.19 + strike * 0.26) * blend;
+        zombie.rig.position.y += (0.075 * (1 - strike) - 0.024 * follow) * blend;
+        break;
       case "slam":
         for (const [i, limb] of zombie.arms.entries()) {
           limb.rotation.x = lerp(limb.rotation.x, lerp(-3.02, -0.85, strike), blend);
           limb.rotation.z = (i === 0 ? -1 : 1) * 0.28 * (1 - strike) * blend;
         }
-        zombie.group.rotation.x += lerp(-0.24, 0.94, strike) * blend;
-        zombie.rig.position.y -= 0.12 * strike * blend;
+        zombie.group.rotation.x += lerp(-0.24, 0.84, strike) * blend + follow * 0.11;
+        zombie.rig.position.y -= (0.13 * strike + 0.03 * wind) * blend;
+        zombie.legs[0].rotation.x = lerp(zombie.legs[0].rotation.x, -0.23, blend);
+        zombie.legs[1].rotation.x = lerp(zombie.legs[1].rotation.x, 0.16, blend);
         break;
       case "pounce": {
         const takeoff = smooth(elapsed, windup, windup + 0.08);
-        const airborne = Math.sin(Math.PI * THREE.MathUtils.clamp((elapsed - windup) / hunterPounce.duration, 0, 1));
+        const { lift } = hunterPounceMotion((elapsed - windup) / hunterPounce.duration);
         arm.x = lerp(arm.x, lerp(0.7, -1.95, takeoff), blend);
         other.x = lerp(other.x, lerp(0.43, -1.75, takeoff), blend);
         zombie.rig.rotation.x = lerp(zombie.rig.rotation.x, 0.68, blend);
-        zombie.rig.position.y += (airborne * 0.37 - (1 - takeoff) * 0.32) * blend;
+        zombie.rig.position.y += (lift * 0.37 - (1 - takeoff) * 0.32) * blend - follow * 0.12;
         zombie.legs[0].rotation.x = lerp(zombie.legs[0].rotation.x, lerp(-0.7, 0.86, takeoff), blend);
         zombie.legs[1].rotation.x = lerp(zombie.legs[1].rotation.x, lerp(0.33, 1.13, takeoff), blend);
         break;
       }
       case "shove":
-        zombie.rig.rotation.y = sign * lerp(-0.58, 0.36, strike) * blend;
-        zombie.group.rotation.x += lerp(-0.09, 0.56, strike) * blend;
+        zombie.rig.rotation.y += sign * lerp(-0.58, 0.36, strike) * blend;
+        zombie.group.rotation.x += lerp(-0.09, 0.52, strike) * blend + follow * 0.08;
+        zombie.rig.position.y -= 0.06 * strike * blend;
+        zombie.legs[side].rotation.x = lerp(zombie.legs[side].rotation.x, -0.21, blend);
         arm.x = lerp(arm.x, lerp(-0.93, -1.39, strike), blend);
         arm.z = sign * lerp(0.64, 0.16, strike) * blend;
         other.x = lerp(other.x, 0.21, blend);
         break;
       case "dive":
-        zombie.group.rotation.x += lerp(-0.45, 0.82, strike) * blend;
+        zombie.group.rotation.x += lerp(-0.45, 0.77, strike) * blend + follow * 0.09;
         zombie.rig.position.y -= 0.24 * strike * blend;
         arm.x = lerp(arm.x, lerp(0.45, -1.33, strike), blend);
         other.x = lerp(other.x, lerp(0.45, -1.2, strike), blend);
@@ -3930,13 +4168,14 @@ export class NightfallEngine {
         break;
       case "bite":
         zombie.group.rotation.x += lerp(-0.36, 0.67, strike) * blend;
-        zombie.head.rotation.x += lerp(-0.31, 0.35, strike) * blend;
+        zombie.head.rotation.x += lerp(-0.31, 0.35, strike) * blend + follow * 0.13;
         arm.x = lerp(arm.x, -1.04, blend);
         other.x = lerp(other.x, -1.04, blend);
         break;
       case "swipe":
         zombie.group.rotation.x += lerp(-0.26, 0.32, strike) * blend;
-        zombie.group.rotation.z += sign * lerp(0.26, -0.21, strike) * blend;
+        zombie.group.rotation.z += sign * (lerp(0.26, -0.21, strike) * blend - follow * 0.09);
+        zombie.legs[side].rotation.x = lerp(zombie.legs[side].rotation.x, -0.16, blend);
         arm.x = lerp(arm.x, lerp(1.42, -1.23, strike), blend);
         arm.z = sign * lerp(0.65, -0.2, strike) * blend;
         other.x = lerp(other.x, lerp(-0.71, -1.13, strike), blend);
@@ -3949,7 +4188,7 @@ export class NightfallEngine {
     const p = zombie.group.position;
     const player = this.combatTarget?.eye ?? this.camera.position;
     if (lunge.advanced === 0) this.playSpatialCue("enemy-swing", p, p.distanceTo(player));
-    const advanced = Math.min(1, progress) * lunge.distance;
+    const advanced = hunterPounceMotion(progress).travel * lunge.distance;
     const step = advanced - lunge.advanced;
     const x = p.x + Math.sin(attack.yaw) * step;
     const z = p.z + Math.cos(attack.yaw) * step;
@@ -3971,48 +4210,53 @@ export class NightfallEngine {
     lunge.advanced = advanced;
   }
 
-  private animateZombieDeath(zombie: Zombie, dt: number) {
-    const settle = Math.exp(-dt * 16);
-    zombie.rig.rotation.x *= settle;
-    zombie.rig.rotation.y *= settle;
-    zombie.rig.rotation.z *= settle;
-    zombie.rig.position.y = THREE.MathUtils.lerp(zombieRigHeight, zombie.rig.position.y, settle);
+  private animateZombieDeath(zombie: Zombie) {
+    const death = zombie.death;
+    if (!death) return;
     const seconds = this.elapsed - zombie.dead;
-    const airborne = zombie.kind === "flier" && (zombie.deathHeight ?? 0) > 0.1;
-    const duration = airborne
-      ? Math.max(0.42, Math.sqrt(((zombie.deathHeight ?? 0) * 2) / 15))
-      : 0.66;
-    const fall = THREE.MathUtils.clamp(seconds / duration, 0, 1);
-    const tilt = airborne
-      ? Math.min(1, fall * 1.3)
-      : THREE.MathUtils.smoothstep(fall, 0.12, 0.93);
-    const buckle = airborne ? 0 : Math.sin(Math.PI * fall) * (1 - fall);
-    const side = zombie.tumbleSign ?? 1;
-    zombie.group.rotation.x = -tilt * 1.53 + buckle * 0.23;
-    zombie.group.rotation.z =
-      side *
-      (0.35 * Math.sin(fall * Math.PI) + tilt * (airborne ? 0.32 : 0.15));
-    zombie.group.position.y =
-      Math.max(0, (zombie.deathHeight ?? 0) * (1 - fall * fall)) - tilt * 0.045 - buckle * 0.19;
-    zombie.legs[0].rotation.x = 0.48 * Math.sin(fall * Math.PI);
-    zombie.legs[1].rotation.x = -0.36 * Math.sin(fall * Math.PI);
-    zombie.arms[0].rotation.x = -0.18 - 0.8 * Math.sin(fall * Math.PI);
-    zombie.arms[1].rotation.x = -0.43 - 0.66 * Math.sin(fall * Math.PI);
-    zombie.arms[0].rotation.z = zombie.arms[1].rotation.z = 0;
-    zombie.head.rotation.set(-buckle * 0.65, side * 0.24 * tilt, side * 0.21 * tilt);
-    zombie.wings?.forEach((wing, i) => {
-      wing.rotation.z =
-        (i === 0 ? -1 : 1) *
-        (0.82 * tilt + Math.sin(seconds * 24) * (1 - fall) * 0.27);
-    });
-    zombie.throat?.scale.setScalar(1);
-    if (seconds >= duration && seconds - dt < duration) {
-      this.sound(
-        "fall",
-        zombie.group.position.distanceTo(this.camera.position),
-      );
+    const { start } = death;
+    const { airborne, landed, height, stagger, collapse, settle, release } =
+      zombieFallMotion(zombie.kind, seconds, start.y, death.fallSpeed);
+    if (landed && death.landed && Math.abs(settle) < 0.001 && seconds > 1.5) {
+      if (seconds > 5) zombie.group.visible = false;
+      return;
     }
-    if (seconds > 5) zombie.group.visible = false;
+    const heavy = zombie.kind === "brute" || zombie.kind === "tank";
+    const low = zombie.crawl && start.pose[5] < 0.58;
+    const side = zombie.tumbleSign ?? 1;
+    const direction = zombie.lastImpact ?? zombieImpactDirection(0, 0, start.yaw);
+    const { forward, sideways } = zombieLocalImpact(direction.x, direction.z, start.yaw);
+    const slide = (heavy ? 0.52 : 0.27) * collapse + (heavy ? 0.19 : 0.07) * stagger;
+    const flutter = airborne ? Math.sin(seconds * 23) * (1 - collapse) * 0.32 : 0;
+    const target = blendZombieMotion(start, {
+      x: start.x + direction.x * slide,
+      y: 0,
+      z: start.z + direction.z * slide,
+      yaw: start.yaw + side * (stagger * 0.23 + collapse * 0.12),
+      pose: [
+        forward * ((low ? 0.16 : 1.53) * collapse + 0.18 * stagger) + settle * 0.085,
+        -sideways * (low ? 0.31 : 1.49) * collapse + side * (heavy ? 0.46 : 0.19) * stagger,
+        low ? 1.46 : stagger * 0.18, 0, side * stagger * 0.11,
+        low ? zombieCrawl.rigHeight : zombieRigHeight - stagger * (heavy ? 0.23 : 0.1),
+        -stagger * 0.52, side * 0.22 * collapse, side * 0.20 * collapse,
+        -0.18 - 0.78 * stagger, -0.28 * collapse - side * 0.34 * stagger,
+        -0.43 - 0.51 * stagger, 0.22 * collapse - side * 0.22 * stagger,
+        0.48 * stagger + 0.07 * collapse, -0.48 * stagger,
+        -0.91 * collapse - flutter, 0.82 * collapse - flutter * 0.63, 1,
+      ],
+    }, release);
+    if (airborne) target.y = height;
+    else target.y = Math.max(0, target.y + settle * (heavy ? 0.046 : 0.026));
+    const p = zombie.group.position;
+    if (!clearSegment(p.x, p.z, target.x, target.z, this.obstacles)) {
+      target.x = p.x;
+      target.z = p.z;
+    }
+    this.renderZombieMotion(zombie, target);
+    if (landed && !death.landed) {
+      death.landed = true;
+      this.playSpatialCue("fall", p, p.distanceTo(this.camera.position), heavy ? 1.75 : 1);
+    }
   }
 
   private updateFlierFall(zombie: Zombie, dt: number) {
@@ -4024,20 +4268,25 @@ export class NightfallEngine {
     const p = zombie.group.position;
     const descending = zombie.airFallSpeed !== undefined;
     if (descending) {
-      const speed = zombie.airFallSpeed! + 13 * dt;
-      p.y = Math.max(0, p.y - speed * dt);
+      const previousSpeed = zombie.airFallSpeed!;
+      const speed = previousSpeed + 13 * dt;
+      p.y = Math.max(0, p.y - (previousSpeed + speed) * 0.5 * dt);
       zombie.airFallSpeed = speed;
       if (p.y === 0) {
         zombie.airFallSpeed = undefined;
         zombie.groundedUntil = this.elapsed + 0.8;
-        this.sound("fall", p.distanceTo(this.camera.position));
+        this.playSpatialCue("fall", p, p.distanceTo(this.camera.position));
       }
     }
-    zombie.group.rotation.x -= descending ? 0.52 : 0.26;
-    zombie.group.rotation.z +=
-      (zombie.tumbleSign ?? 1) * (descending ? 0.58 : 0.22);
+    const smooth = THREE.MathUtils.smoothstep;
+    const balance = smooth(this.elapsed - (zombie.airFallAt ?? this.elapsed), 0, 0.21) *
+      (descending ? 1 : smooth((zombie.groundedUntil ?? this.elapsed) - this.elapsed, 0, 0.35));
+    zombie.group.rotation.x -= 0.49 * balance;
+    zombie.group.rotation.z += (zombie.tumbleSign ?? 1) * 0.62 * balance;
+    const flap = Math.sin(this.elapsed * 15 + zombie.phase) * 0.66;
     zombie.wings?.forEach((wing, i) => {
-      wing.rotation.z = (i === 0 ? -1 : 1) * 0.95;
+      const flutter = Math.sin(this.elapsed * 23 + i) * 0.22 * smooth(p.y, 0, 0.35);
+      wing.rotation.z = (i === 0 ? -1 : 1) * THREE.MathUtils.lerp(flap, 0.89 + flutter, balance);
     });
     return true;
   }
@@ -4104,7 +4353,7 @@ export class NightfallEngine {
   private playSpatialCue(
     kind: "spit-warn" | "spit-release" | "enemy-step" | "enemy-swing" |
       "enemy-brace" | "enemy-crouch" | "enemy-slam" |
-      "impact-metal" | "impact-concrete",
+      "impact-metal" | "impact-concrete" | "fall",
     source: THREE.Vector3,
     distance: number,
     stepWeight?: number,
@@ -4172,7 +4421,7 @@ export class NightfallEngine {
     return mesh;
   }
 
-  private moveZombie(zombie: Zombie, speed: number) {
+  private moveZombie(zombie: Zombie, speed: number, dt: number) {
     const p = zombie.group.position,
       player = this.combatTarget?.eye ?? this.camera.position;
     const navigation = this.combatTarget && this.roomNavigation.get(this.combatTarget.id);
@@ -4188,22 +4437,28 @@ export class NightfallEngine {
       dz = target.z - p.z;
     const distance = Math.hypot(dx, dz);
     if (distance <= 0.01) return;
-    const step = Math.min(speed, distance);
-    zombie.group.rotation.y = Math.atan2(dx, dz);
-    const nx = (dx / distance) * step,
-      nz = (dz / distance) * step;
+    const gait = zombie.gait;
+    gait.heading = Math.atan2(dx, dz);
+    const pace = zombie.kind === "flier" || zombie.crawl ? 1 : 1 - 0.16 * Math.abs(zombie.limp ?? 0);
+    const speedTarget = Math.min(speed * pace, distance / Math.max(dt, 0.001));
+    const direction = steerZombieVelocity(gait.vx, gait.vz, dx / distance * speedTarget, dz / distance * speedTarget, dt);
+    gait.vx = direction.x;
+    gait.vz = direction.z;
+    const step = Math.min(dt, distance / Math.max(0.001, Math.hypot(gait.vx, gait.vz)));
+    const nx = gait.vx * step, nz = gait.vz * step;
     const beforeX = p.x,
       beforeZ = p.z;
     if (canOccupy(p.x + nx, p.z, this.obstacles)) p.x += nx;
+    else gait.vx = 0;
     if (canOccupy(p.x, p.z + nz, this.obstacles)) p.z += nz;
-    const gait = zombie.gait;
+    else gait.vz = 0;
     const travel = Math.hypot(p.x - beforeX, p.z - beforeZ);
     gait.travel += travel;
     const phase = advanceZombieGait(zombie.kind, gait.phase, travel, zombie.group.scale.y);
     const footfall = Math.floor(phase * 2) > Math.floor(gait.phase * 2);
     gait.phase = phase % 1;
     const { stepWeight } = zombieGaits[zombie.kind];
-    if (footfall && stepWeight > 0) {
+    if (footfall && stepWeight > 0 && !zombie.crawl) {
       const distanceToPlayer = p.distanceTo(this.camera.position);
       if (distanceToPlayer < 16)
         this.playSpatialCue("enemy-step", p, distanceToPlayer, stepWeight);
@@ -4217,6 +4472,7 @@ export class NightfallEngine {
     const dt = Math.min(frameTime, 0.04);
     this.lastTime = now;
     const playing = this.state.status === "playing" && this.roomConnected;
+    if (playing && this.renderBudget.sample(frameTime, this.settings.prefer120)) this.applyRenderScale();
     const guest = this.room && !this.room.host;
     const hostingWhilePaused = this.room?.host && this.roomConnected && this.state.status === "paused";
     const recoilDecay = Math.exp(-dt * weapons[this.state.weaponId].fireFx.recovery);
@@ -4236,10 +4492,11 @@ export class NightfallEngine {
     if (!guest && ((playing && this.state.status === "playing") || hostingWhilePaused || preview))
       this.updateZombies(dt, preview ? now / 1000 : this.elapsed, !preview);
     if (guest) {
-      const blend = 1 - Math.exp(-dt * 19);
       for (const zombie of this.zombies) {
         const target = this.roomZombieTargets.get(zombie.networkId);
-        if (target) zombie.group.position.lerp(target, blend);
+        if (!target || target.age >= target.duration) continue;
+        target.age += Math.min(frameTime, 0.12);
+        this.renderZombieMotion(zombie, blendZombieMotion(target.from, target.to, target.age / target.duration));
       }
     }
     if (this.room) this.roomAvatars.update(dt);
@@ -4268,12 +4525,12 @@ export class NightfallEngine {
     );
     const aiming = this.ads && playing && this.state.heldItem === "gun";
     const weaponSpec = weapons[this.state.weaponId];
-    this.camera.fov = THREE.MathUtils.lerp(
-      this.camera.fov,
-      aiming ? weaponSpec.sight : this.dodge ? 74 : this.sprinting ? 72 : 68,
-      1 - Math.exp(-dt * 13),
-    );
-    this.camera.updateProjectionMatrix();
+    const targetFov = aiming ? weaponSpec.sight : this.dodge ? 74 : this.sprinting ? 72 : 68;
+    if (this.camera.fov !== targetFov) {
+      this.camera.fov = Math.abs(this.camera.fov - targetFov) < 0.02 ? targetFov :
+        THREE.MathUtils.lerp(this.camera.fov, targetFov, 1 - Math.exp(-dt * 13));
+      this.camera.updateProjectionMatrix();
+    }
     const stride = playing ? Math.min(this.movement.length() / 4, 1) : 0;
     const bob =
       Math.sin(this.stepPhase * 2) * stride * 0.012 +
@@ -4330,12 +4587,44 @@ export class NightfallEngine {
         this.impacts.splice(i, 1);
       }
     }
+    this.updateContactShadows();
+    this.shadowFrame = !this.shadowFrame;
+    if (this.renderer.shadowMap.enabled) {
+      const adaptiveLimit = this.staticShadows ? 0.94 : 0.83;
+      this.setStaticShadows(this.settings.prefer120 || this.renderBudget.scale < adaptiveLimit);
+      const shadowInterval = this.coarse ? 47 : 30;
+      if (!this.staticShadows && this.shadowFrame && now - this.lastShadow >= shadowInterval) {
+        this.lastShadow = now;
+        this.renderer.shadowMap.needsUpdate = true;
+      }
+    }
     this.renderer.render(this.scene, this.camera);
+    if (playing && this.state.status === "playing") this.sampleFps(now);
+    else if (this.fpsWindowStart !== null) this.resetFps();
     if (playing && now - this.lastSnapshot > 90) {
       this.lastSnapshot = now;
       this.publish();
     }
   };
+
+  private sampleFps(now: number) {
+    if (this.fpsWindowStart === null) {
+      this.fpsWindowStart = now;
+      return;
+    }
+    this.fpsFrameCount++;
+    const elapsed = now - this.fpsWindowStart;
+    if (elapsed < 250) return;
+    this.state.fps = Math.round(this.fpsFrameCount * 1000 / elapsed);
+    this.fpsWindowStart = now;
+    this.fpsFrameCount = 0;
+  }
+
+  private resetFps() {
+    this.fpsWindowStart = null;
+    this.fpsFrameCount = 0;
+    this.state.fps = null;
+  }
 
   private animateEquipment(dt: number) {
     const grenade = this.equipmentModels.get("grenade")!;
@@ -4526,6 +4815,8 @@ export class NightfallEngine {
       document.exitPointerLock();
     const disposedMaterials = new Set<THREE.Material>();
     this.scene.traverse((o) => {
+      if (o instanceof THREE.DirectionalLight) o.shadow.dispose();
+      if (o instanceof THREE.InstancedMesh) o.dispose();
       if (
         o instanceof THREE.Mesh ||
         o instanceof THREE.Points ||

@@ -258,12 +258,14 @@ export class ZombieModels {
         parts.push(tapered([x, reach - 0.035, 0.055], [x + side * 0.006, reach - 0.096 + Math.abs(1.5 - i) * 0.01, 0.087], 0.01, 0.005, skin));
       }
       if (heavy) parts.push(ellipsoid([0, -0.046, -0.016], [0.144, 0.109, 0.139], "#53534d", side * 0.2));
-      arm.add(bake(parts, this.cloth));
+      const shoulder = bake(parts, this.cloth);
+      shoulder.userData.zombieZone = `${label}-shoulder`;
+      arm.add(shoulder);
 
       const leg = new THREE.Group();
       leg.name = `leg-${label}`;
       leg.position.set(side * 0.127, 0.849, 0);
-      leg.add(bake([
+      const legMesh = bake([
         tapered([0, 0, 0], [side * 0.017, -0.38, 0.025], heavy ? 0.12 : 0.102, 0.078, "#4e5044"),
         ellipsoid([side * 0.018, -0.41, 0.033], [0.08, 0.099, 0.073], "#59594c"),
         tapered([side * 0.02, -0.39, 0.022], [side * 0.027, -0.69, -0.028], 0.077, 0.056, "#4a4b42"),
@@ -271,7 +273,9 @@ export class ZombieModels {
         ellipsoid([side * 0.03, -0.778, 0.053], [0.091, 0.065, 0.135], "#303331"),
         panel([side * 0.03, -0.822, 0.048], [0.166, 0.034, 0.231], "#252823"),
         panel([side * 0.03, -0.724, 0.104], [0.06, 0.017, 0.019], "#6d6757", 0.18),
-      ], this.cloth));
+      ], this.cloth);
+      legMesh.userData.zombieZone = `${label}-leg`;
+      leg.add(legMesh);
       group.add(arm, leg);
     }
 

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dodgeTuning } from "../lib/nightfall/movement.ts";
-import { zombieGaits } from "../lib/nightfall/zombie-motion.ts";
+import { zombieCrawl, zombieGaits } from "../lib/nightfall/zombie-motion.ts";
 import { hunterPounce, zombieMelee } from "../lib/nightfall/zombie-attack.ts";
 import { reloadAnimation } from "../lib/nightfall/reload-motion.ts";
 import { characters } from "../lib/nightfall/room-protocol.ts";
@@ -53,6 +53,7 @@ const config = {
     meleeWindupSeconds,
     meleeRecoverySeconds,
     gaits: zombieGaits,
+    crawl: zombieCrawl,
     melee: zombieMelee,
     hunterPounce,
   },

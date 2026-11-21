@@ -21,6 +21,7 @@ import {
 
 const INITIAL: Snapshot = {
   status: "menu",
+  fps: null,
   health: 100,
   ammo: 30,
   reserve: 0,
@@ -63,6 +64,7 @@ const DEFAULT_SETTINGS: Settings = {
   sensitivity: 1,
   volume: 65,
   quality: true,
+  prefer120: false,
   difficulty: "survivor",
 };
 const DIFFICULTIES: { id: Difficulty; label: string; thai: string }[] = [
@@ -709,13 +711,18 @@ export default function Nightfall() {
                 {state.gateOpen ? "ประตูเปิด" : time(state.timeLeft)}
               </span>
             </div>
-            <button
-              className="icon-button"
-              onClick={() => engine.current?.pause()}
-              aria-label="พักเกม"
-            >
-              <Icon name="pause" />
-            </button>
+            <div className="game-top-actions">
+              <button
+                className="icon-button"
+                onClick={() => engine.current?.pause()}
+                aria-label="พักเกม"
+              >
+                <Icon name="pause" />
+              </button>
+              {status === "playing" && (
+                <div className="fps-counter">{state.fps ?? "–"} FPS</div>
+              )}
+            </div>
           </header>
           {multiplayer.room && (
             <div className="room-hud">
@@ -1280,8 +1287,23 @@ export default function Nightfall() {
                 </label>
                 <div className="toggle-setting">
                   <div>
+                    <strong>เน้น 120 FPS</strong>
+                    <span>ยอมลดความละเอียดเร็วขึ้นเพื่อให้เฟรมนิ่งบนจอ 120 Hz ขึ้นไป</span>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={settings.prefer120}
+                    aria-label="เน้น 120 FPS"
+                    className={`toggle ${settings.prefer120 ? "on" : ""}`}
+                    onClick={() => setSettings({ ...settings, prefer120: !settings.prefer120 })}
+                  >
+                    <i />
+                  </button>
+                </div>
+                <div className="toggle-setting">
+                  <div>
                     <strong>เงาและรายละเอียดสูง</strong>
-                    <span>ปิดเพื่อให้เล่นลื่นขึ้นบนอุปกรณ์ทั่วไป</span>
+                    <span>เกมปรับความละเอียดอัตโนมัติ ปิดตัวเลือกนี้เพื่อลดภาระเครื่องอีกขั้น</span>
                   </div>
                   <button
                     role="switch"

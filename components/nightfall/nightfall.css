@@ -758,6 +758,25 @@
 .game-top button {
   pointer-events: auto;
 }
+.game-top-actions {
+  position: relative;
+}
+.fps-counter {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 7px);
+  min-width: 7ch;
+  padding: 4px 7px;
+  border: 1px solid var(--nf-line);
+  border-radius: 3px;
+  background: rgba(15, 23, 16, 0.88);
+  color: #e0edc9;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-align: right;
+  white-space: nowrap;
+}
 .game-logo {
   display: flex;
   align-items: center;

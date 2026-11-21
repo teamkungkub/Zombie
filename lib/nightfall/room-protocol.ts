@@ -20,6 +20,7 @@ export type RoomZombie = {
   pose: number[];
 };
 export type RoomWorld = {
+  motionTime?: number;
   wave: number;
   timeLeft: number;
   seconds: number;
@@ -42,12 +43,16 @@ export type RoomView = {
   players: RoomPlayer[];
   world: RoomWorld | null;
 };
+export const zombieHitZones = ["body", "head", "left-shoulder", "right-shoulder", "left-leg", "right-leg"] as const;
+export type ZombieHitZone = (typeof zombieHitZones)[number];
+export type ZombieGunImpact = { zone: ZombieHitZone; x: number; z: number };
+
 export type RoomCommandPayload =
   | { type: "hit-player"; target: string; weapon: WeaponId; amount: number }
-  | { type: "hit-zombie"; target: number; weapon: WeaponId | "knife" | "grenade"; amount: number }
+  | { type: "hit-zombie"; target: number; weapon: WeaponId | "knife" | "grenade"; amount: number; impact?: ZombieGunImpact }
   | { type: "enemy-damage"; target: string; amount: number };
 export type RoomCommand = RoomCommandPayload & { id: number };
 export type RoomEvent =
   | { id: number; type: "damage"; amount: number; source?: string }
-  | { id: number; type: "zombie-hit"; target: number; amount: number; source: string };
+  | { id: number; type: "zombie-hit"; target: number; amount: number; source: string; impact?: ZombieGunImpact };
 export type RoomFrame = { session?: RoomSession; room: RoomView; events: RoomEvent[] };

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dodgeDistanceAt, dodgeTuning, movementInWorld } from "./movement.ts";
 import { healingSeconds, injectionPose, injectionTiming, nextHeldItem, throwCharge } from "./equipment.ts";
-import { advanceZombieGait, zombieGaits, zombieGaitPose } from "./zombie-motion.ts";
-import { hunterPounceHits, zombieMelee } from "./zombie-attack.ts";
+import { advanceZombieGait, blendZombieMotion, steerZombieVelocity, turnZombieToward, zombieCrawl, zombieCrawlThreshold, zombieCrawlTransition, zombieFallMotion, zombieGaits, zombieGaitPose, zombieImpactDirection, zombieImpactMotion, zombieLocalImpact } from "./zombie-motion.ts";
+import { hunterPounceHits, hunterPounceMotion, zombieMelee } from "./zombie-attack.ts";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion.ts";
+import { RenderBudget, renderPixelLimit } from "./render-quality.ts";
 import {
   collectWeapon,
   loadShotgunShell,
@@ -31,6 +32,35 @@ import {
   bossAttackHits,
   nextStagePhase,
 } from "./rules.ts";
+
+test("render resolution limits high-DPI buffers and lowers scale during sustained slow frames", () => {
+  assert.ok(renderPixelLimit(3840, 2160, 2, false, true) < 0.6);
+  assert.equal(renderPixelLimit(1280, 720, 2, false, true), 1.5);
+  assert.equal(renderPixelLimit(1280, 720, 2, false, false), 1);
+  const budget = new RenderBudget();
+  for (let i = 0; i < 200; i++) budget.sample(1 / 30, false);
+  assert.equal(budget.scale, 0.63);
+  assert.equal(budget.sample(1, false), false);
+  for (let i = 0; i < 60; i++) budget.sample(1 / 60, false);
+  assert.equal(budget.scale, 0.63);
+  for (let i = 0; i < 250; i++) budget.sample(1 / 60, false);
+  assert.ok(budget.scale > 0.63);
+});
+
+test("120 FPS mode reduces resolution sooner and automatic mode detects high-refresh frames", () => {
+  const preferred = new RenderBudget();
+  const automatic = new RenderBudget();
+  for (let i = 0; i < 100; i++) {
+    preferred.sample(1 / 60, true);
+    automatic.sample(1 / 60, false);
+  }
+  assert.ok(preferred.scale < 1);
+  assert.equal(automatic.scale, 1);
+  for (let i = 0; i < 120; i++) automatic.sample(1 / 120, false);
+  assert.equal(automatic.scale, 1);
+  for (let i = 0; i < 100; i++) automatic.sample(1 / 90, false);
+  assert.ok(automatic.scale < 1);
+});
 
 test("dodge follows the movement direction relative to the camera and caps its travel", () => {
   assert.equal(movementInWorld(-1, 0, 0).z, 1);
@@ -63,6 +93,30 @@ test("hunters lean and stride farther while heavy zombies sway, then settle as m
   assert.equal(idle.leftLeg, 0);
 });
 
+test("zombie steering turns gradually, using the short path across the angle seam", () => {
+  const current = Math.PI - 0.05;
+  const target = -Math.PI + 0.05;
+  const heading = turnZombieToward(current, target, 1 / 60);
+  assert.ok(heading > current && heading < current + 0.1);
+  assert.ok(Math.abs(turnZombieToward(0, Math.PI, 1 / 60)) <= 0.15);
+  const step = steerZombieVelocity(2, 0, 0, 2, 1 / 60);
+  assert.ok(step.x > 0 && step.x < 2 && step.z > 0 && step.z < 2);
+});
+
+test("remote zombie joints and position blend together and pounces ease into the landing", () => {
+  const from = { x: 0, y: 0, z: 0, yaw: Math.PI - 0.1, pose: [0, 1] };
+  const to = { x: 2, y: 0, z: 0, yaw: -Math.PI + 0.1, pose: [1, -1] };
+  const halfway = blendZombieMotion(from, to, 0.5);
+  assert.equal(halfway.x, 1);
+  assert.ok(Math.abs(halfway.yaw - Math.PI) < 0.001);
+  assert.deepEqual(halfway.pose, [0.5, 0]);
+  assert.equal(blendZombieMotion(from, to, 2).x, to.x);
+  assert.deepEqual(hunterPounceMotion(0), { travel: 0, lift: 0 });
+  assert.ok(hunterPounceMotion(0.1).travel < 0.1);
+  assert.ok(hunterPounceMotion(0.9).travel > 0.9);
+  assert.deepEqual(hunterPounceMotion(1), { travel: 1, lift: 0 });
+});
+
 test("a melee swing misses players who back away or sidestep its locked direction", () => {
   assert.equal(meleeStrikeHits(0, 0, 1.1, 1.5), true);
   assert.equal(meleeStrikeHits(0, 0, 1.55, 1.5), false);
@@ -83,6 +137,55 @@ test("hit reactions settle back to the ordinary pose", () => {
   assert.equal(zombieHitAmount(-0.01), 0);
   assert.ok(zombieHitAmount(0.08) > zombieHitAmount(0.24));
   assert.equal(zombieHitAmount(0.32), 0);
+});
+
+test("a leg hit shortens the stride on its own side and incoming direction follows the zombie's heading", () => {
+  const phase = 0.25;
+  const ordinary = zombieGaitPose("standard", phase, 1);
+  const left = zombieGaitPose("standard", phase, 1, -1);
+  const right = zombieGaitPose("standard", phase, 1, 1);
+  assert.ok(Math.abs(left.leftLeg) < Math.abs(ordinary.leftLeg));
+  assert.equal(left.rightLeg, ordinary.rightLeg);
+  assert.equal(right.leftLeg, ordinary.leftLeg);
+  assert.ok(Math.abs(right.rightLeg) < Math.abs(ordinary.rightLeg));
+  const incoming = zombieImpactDirection(0, -3, 0);
+  assert.deepEqual(incoming, { x: 0, z: -1 });
+  const local = zombieLocalImpact(incoming.x, incoming.z, Math.PI / 2);
+  assert.ok(Math.abs(local.forward) < 0.001);
+  assert.equal(local.sideways, 1);
+});
+
+test("a crawler braces while lowering and settles into its ground pose after repeated leg hits", () => {
+  assert.equal(zombieCrawlThreshold("standard"), 2);
+  assert.equal(zombieCrawlThreshold("hunter"), 2);
+  assert.equal(zombieCrawlThreshold("brute"), 3);
+  assert.equal(zombieCrawlThreshold("tank"), 3);
+  assert.deepEqual(zombieCrawlTransition(0), { lower: 0, brace: 0 });
+  const dropping = zombieCrawlTransition(0.29);
+  assert.ok(dropping.lower > 0 && dropping.lower < 1);
+  assert.equal(dropping.brace, 1);
+  assert.deepEqual(zombieCrawlTransition(zombieCrawl.collapseSeconds), { lower: 1, brace: 0 });
+});
+
+test("a heavy zombie staggers before falling and an airborne zombie preserves its fall velocity", () => {
+  assert.equal(zombieImpactMotion(0), 0);
+  assert.ok(zombieImpactMotion(0.04) > 0);
+  assert.equal(zombieImpactMotion(0.36), 0);
+  const bracing = zombieFallMotion("tank", 0.21, 0, 0);
+  assert.equal(bracing.collapse, 0);
+  assert.ok(bracing.stagger > 0.95);
+  assert.equal(zombieFallMotion("tank", 0.8, 0, 0).landed, false);
+  const impact = zombieFallMotion("tank", 0.96, 0, 0);
+  assert.equal(impact.landed, true);
+  assert.equal(impact.collapse, 1);
+  assert.equal(impact.settle, 0);
+  const start = zombieFallMotion("flier", 0, 2.65, 2);
+  assert.equal(start.release, 0);
+  assert.equal(start.height, 2.65);
+  const continuing = zombieFallMotion("flier", 0.1, 2.65, 2);
+  assert.ok(continuing.height < zombieFallMotion("flier", 0.1, 2.65, 0).height);
+  assert.equal(zombieFallMotion("flier", 1, 2.65, 2).height, 0);
+  assert.equal(zombieFallMotion("flier", 1, 2.65, 2).landed, true);
 });
 
 test("shotgun reload commits exactly one shell per step and stops at capacity or empty reserve", () => {

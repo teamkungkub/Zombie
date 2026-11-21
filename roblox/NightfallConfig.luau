@@ -317,6 +317,21 @@ return {
                 ["stepWeight"] = 0.88,
             },
         },
+        ["crawl"] = {
+            ["legHits"] = 2,
+            ["heavyLegHits"] = 3,
+            ["collapseSeconds"] = 0.82,
+            ["maxSpeed"] = 0.62,
+            ["speedRatio"] = 0.54,
+            ["rigHeight"] = 0.27,
+            ["melee"] = {
+                ["style"] = "crawl",
+                ["trigger"] = 1.16,
+                ["reach"] = 1.46,
+                ["arc"] = 0.61,
+                ["windup"] = 0.48,
+            },
+        },
         ["melee"] = {
             ["standard"] = {
                 ["style"] = "swipe",

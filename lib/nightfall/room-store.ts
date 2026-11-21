@@ -2,6 +2,7 @@ import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { knifeTuning } from "./equipment.ts";
 import { bosses, enemyTypes } from "./rules.ts";
 import { weapons, type WeaponId } from "./weapons.ts";
+import { zombieHitZones } from "./room-protocol.ts";
 import type {
   CharacterId,
   RoomEvent,
@@ -11,6 +12,7 @@ import type {
   RoomSession,
   RoomView,
   RoomWorld,
+  ZombieGunImpact,
 } from "./room-protocol.ts";
 
 const playerLimit = 4;
@@ -90,6 +92,7 @@ function validStrike(value: unknown) {
 
 function worldSnapshot(value: unknown): value is RoomWorld {
   return object(value) && integer(value.wave, 1, 100_000) &&
+    (value.motionTime === undefined || between(value.motionTime, 0, 1_000_000)) &&
     between(value.timeLeft, 0, 60_000) && between(value.seconds, 0, 1_000_000) &&
     integer(value.kills) && integer(value.remaining, 0, 100) &&
     typeof value.gateOpen === "boolean" && typeof value.checkpoint === "boolean" &&
@@ -163,6 +166,14 @@ function weaponMaximum(id: WeaponId) {
   return weapons[id].head * weapons[id].pellets;
 }
 
+function gunImpact(value: unknown): ZombieGunImpact | undefined {
+  if (!object(value) || !between(value.x, -1, 1) || !between(value.z, -1, 1) ||
+    !zombieHitZones.some((zone) => zone === value.zone)) return;
+  const length = Math.hypot(value.x, value.z);
+  if (length < 0.98 || length > 1.02) return;
+  return { zone: value.zone as ZombieGunImpact["zone"], x: value.x / length, z: value.z / length };
+}
+
 function spendHit(member: Member) {
   if (member.hitCredits < 1) return false;
   member.hitCredits--;
@@ -180,9 +191,13 @@ function command(room: Room, member: Member, value: unknown) {
     const maximum = knownKey(weapons, value.weapon) ? weaponMaximum(value.weapon) :
       value.weapon === "knife" ? knifeTuning.damage :
       value.weapon === "grenade" ? 210 : 0;
-    if (maximum > 0 && spendHit(member)) deliver(room, host, {
-      type: "zombie-hit", target: value.target, amount: Math.min(value.amount, maximum), source: member.id,
-    });
+    if (maximum > 0 && spendHit(member)) {
+      const impact = knownKey(weapons, value.weapon) ? gunImpact(value.impact) : undefined;
+      deliver(room, host, {
+        type: "zombie-hit", target: value.target, amount: Math.min(value.amount, maximum), source: member.id,
+        ...(impact ? { impact } : {}),
+      });
+    }
     return;
   }
   if (typeof value.target !== "string" || value.target === member.id) return;
