@@ -56,6 +56,7 @@ const INITIAL: Snapshot = {
   boss: null,
 };
 const heldLabels = {
+  katana: { name: "ดาบคาตานะ", action: "คลิกซ้ายหรือกด V เพื่อฟัน" },
   grenade: { name: "ระเบิด", action: "กดค้าง แล้วปล่อยเพื่อโยน" },
   medkit: { name: "ยาฉีดรักษา", action: "คลิกซ้ายเพื่อฉีดยา" },
   energy: { name: "เครื่องดื่มชูกำลัง", action: "คลิกซ้ายเพื่อดื่ม" },
@@ -985,7 +986,7 @@ export default function Nightfall() {
                   {state.reloading
                     ? "กำลังรีโหลด…"
                     : state.ammo === 0 && state.reserve === 0
-                      ? "กระสุนหมด · ฟันด้วยมีด [V]"
+                      ? "กระสุนหมด · ฟันด้วยคาตานะ [V]"
                       : "กด R เพื่อรีโหลด"}
                 </span>
               </div>
@@ -994,15 +995,17 @@ export default function Nightfall() {
                 <span className="weapon-name">
                   {heldLabels[state.heldItem].name}
                 </span>
-                <div>
-                  <strong>
-                    {state.heldItem === "grenade"
-                      ? state.grenades
-                      : state.heldItem === "medkit"
-                        ? state.medkits
-                        : state.energy}
-                  </strong>
-                </div>
+                {state.heldItem !== "katana" && (
+                  <div>
+                    <strong>
+                      {state.heldItem === "grenade"
+                        ? state.grenades
+                        : state.heldItem === "medkit"
+                          ? state.medkits
+                          : state.energy}
+                    </strong>
+                  </div>
+                )}
                 <span className="ammo-help">
                   {heldLabels[state.heldItem].action}
                 </span>
@@ -1099,9 +1102,9 @@ export default function Nightfall() {
               <button
                 className="touch-knife"
                 onClick={() => engine.current?.swingKnife()}
-                aria-label="ฟันด้วยมีด"
+                aria-label="ฟันด้วยคาตานะ"
               >
-                มีด
+                ดาบ
               </button>
               <button
                 className="touch-dodge"
@@ -1356,8 +1359,8 @@ export default function Nightfall() {
                     ["1–5", "สลับปืนที่เก็บแล้ว"],
                     ["SHIFT", "แตะเพื่อเร่งสั้น ๆ หรือกดค้างเพื่อวิ่ง"],
                     ["ALT + WASD", "พุ่งตามทิศที่กดเดิน · ใช้พละกำลัง 14 หน่วย"],
-                    ["V", `ฟันระยะประชิด · ใช้พละกำลัง ${knifeTuning.staminaCost} หน่วย`],
-                    ["Q", "วนเลือกปืน ระเบิด ยา และเครื่องดื่ม"],
+                    ["V", `ฟันด้วยคาตานะทันที · ใช้พละกำลัง ${knifeTuning.staminaCost} หน่วย`],
+                    ["Q", "วนเลือกปืน คาตานะ ระเบิด ยา และเครื่องดื่ม"],
                     ["G", "เลือกถือระเบิดทันที"],
                     ["SPACE", "กระโดด"],
                     ["ESC / P", "พักเกม / ปล่อยเมาส์"],

@@ -503,6 +503,7 @@
   "equipment": {
     "order": [
       "gun",
+      "katana",
       "grenade",
       "medkit",
       "energy"

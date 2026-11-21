@@ -496,7 +496,7 @@ return {
         },
     },
     ["equipment"] = {
-        ["order"] = { "gun", "grenade", "medkit", "energy" },
+        ["order"] = { "gun", "katana", "grenade", "medkit", "energy" },
         ["limits"] = {
             ["grenade"] = 3,
             ["medkit"] = 2,

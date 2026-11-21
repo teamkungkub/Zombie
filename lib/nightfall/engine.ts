@@ -1398,26 +1398,34 @@ export class NightfallEngine {
   private createKnifeView() {
     const rig = this.knifeView;
     const blade = new THREE.Shape();
-    blade.moveTo(-0.025, 0);
-    blade.lineTo(0.029, 0);
-    blade.lineTo(0.032, 0.20);
-    blade.lineTo(-0.012, 0.285);
-    blade.lineTo(-0.025, 0.19);
+    blade.moveTo(-0.023, 0);
+    blade.lineTo(0.027, 0);
+    blade.quadraticCurveTo(0.025, 0.41, -0.059, 0.66);
+    blade.quadraticCurveTo(-0.066, 0.684, -0.107, 0.714);
+    blade.quadraticCurveTo(-0.026, 0.49, -0.023, 0);
     blade.closePath();
     const mesh = new THREE.Mesh(
-      new THREE.ExtrudeGeometry(blade, { depth: 0.009, bevelEnabled: false, curveSegments: 1 }),
-      this.material("#c4cdc9", 0.42, 0.35),
+      new THREE.ExtrudeGeometry(blade, {
+        depth: 0.006, bevelEnabled: true, bevelSize: 0.002, bevelThickness: 0.002,
+        bevelSegments: 1, curveSegments: 12,
+      }),
+      this.material("#d4dedb", 0.26, 0.48),
     );
-    mesh.position.set(0, 0.06, -0.13);
+    mesh.position.set(0, 0.077, -0.13);
     rig.add(mesh);
-    this.box(0.096, 0.018, 0.041, "#7c8377", 0, 0.06, -0.124, rig);
-    this.box(0.043, 0.105, 0.038, "#29322a", 0, 0.009, -0.125, rig);
-    const grip = this.box(0.112, 0.093, 0.114, "#495044", 0.034, -0.007, -0.075, rig);
-    grip.rotation.z = 0.2;
-    for (let i = 0; i < 3; i++)
-      this.box(0.023, 0.043, 0.059, "#6b6e59", 0.006 + i * 0.032, 0.037, -0.108, rig);
-    const sleeve = this.box(0.139, 0.12, 0.36, "#686a52", 0.095, -0.059, 0.12, rig);
-    sleeve.rotation.y = 0.24;
+    const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.069, 0.069, 0.013, 12),
+      this.material("#887451", 0.48, 0.5));
+    guard.position.set(0, 0.05, -0.126);
+    guard.scale.z = 0.71;
+    rig.add(guard);
+    this.box(0.052, 0.028, 0.025, "#a28b59", 0, 0.068, -0.126, rig);
+    this.box(0.047, 0.205, 0.045, "#252a26", 0, -0.061, -0.126, rig);
+    for (let i = 0; i < 7; i++) {
+      const wrap = this.box(0.05, 0.014, 0.049, "#5f403c", 0, 0.026 - i * 0.028, -0.126, rig);
+      wrap.rotation.z = i % 2 ? 0.3 : -0.3;
+    }
+    this.box(0.053, 0.019, 0.052, "#62563c", 0, -0.168, -0.126, rig);
+    this.weaponHands.addGrip(rig, [0, -0.063, -0.123]);
     rig.traverse(part => { if (part instanceof THREE.Mesh) part.castShadow = false; });
     rig.visible = false;
   }
@@ -2237,6 +2245,8 @@ export class NightfallEngine {
           this.fireAt = Math.max(this.fireAt, this.elapsed + 0.19);
       }
       this.trigger = value;
+    } else if (item === "katana") {
+      if (value) this.swingKnife();
     } else if (item === "grenade") {
       if (value && this.state.grenades > 0 && this.grenadeHeldAt === null) {
         this.grenadeHeldAt = this.elapsed;
@@ -2296,7 +2306,7 @@ export class NightfallEngine {
   }
 
   swingKnife() {
-    if (this.state.status !== "playing" || this.activeTime >= this.deadline || this.dodge || this.knifeSwing ||
+    if (this.state.status !== "playing" || !this.roomConnected || this.activeTime >= this.deadline || this.dodge || this.knifeSwing ||
         this.state.stamina < knifeTuning.staminaCost) return;
     this.cancelUse();
     this.state.reloading = false;
@@ -2339,7 +2349,7 @@ export class NightfallEngine {
         this.state.hit = Math.max(1, this.state.hit);
         this.sound("knife-hit");
         if (zombie.health <= 0) {
-          this.state.message = "กำจัดซอมบี้ด้วยมีด";
+          this.state.message = "กำจัดซอมบี้ด้วยคาตานะ";
           this.defeat(zombie);
         } else if ((!this.room || this.room.host) && this.boss?.zombie !== zombie) {
           const p = zombie.group.position;
@@ -2433,6 +2443,7 @@ export class NightfallEngine {
         "KeyA",
         "KeyS",
         "KeyD",
+        "KeyQ",
         "KeyV",
         "ArrowUp",
         "ArrowDown",
@@ -4686,9 +4697,17 @@ export class NightfallEngine {
 
   private animateKnife() {
     const swing = this.state.status === "playing" ? this.knifeSwing : null;
-    this.knifeView.visible = swing !== null;
-    this.weapon.visible = swing === null;
-    if (!swing) return;
+    const held = this.state.heldItem === "katana" && this.state.status !== "menu";
+    this.knifeView.visible = held || swing !== null;
+    this.weapon.visible = !held && swing === null;
+    const restX = Math.min(0.31, this.camera.aspect * 0.37);
+    if (!swing) {
+      if (held) {
+        this.knifeView.position.set(restX, -0.32 - this.sprintPose * 0.26, -0.68);
+        this.knifeView.rotation.set(-0.32 - this.sprintPose * 0.52, -0.24, 0.07);
+      }
+      return;
+    }
 
     const age = this.elapsed - swing.startedAt;
     const smooth = THREE.MathUtils.smoothstep;
@@ -4696,11 +4715,12 @@ export class NightfallEngine {
     const recover = smooth(age, 0.27, knifeTuning.swingSeconds);
     const lift = smooth(age, 0, 0.09) * (1 - recover);
     this.knifeView.position.set(
-      THREE.MathUtils.lerp(0.31 - 0.62 * cut, 0.31, recover),
-      -0.5 + lift * 0.34 - cut * (1 - recover) * 0.08,
-      -0.5 - lift * 0.1,
+      restX * (1 - 2 * cut * (1 - recover)),
+      (held ? -0.32 : -0.5) + lift * 0.26 - cut * (1 - recover) * 0.08,
+      (held ? -0.68 : -0.57) - lift * 0.1,
     );
-    this.knifeView.rotation.set(-0.38 + lift * 0.22, -0.37 + cut * 0.72, 0.46 - cut * 1.56);
+    this.knifeView.rotation.set(-0.32 + lift * 0.22, -0.24 + cut * (1 - recover) * 0.72,
+      0.07 + lift * 0.44 - cut * (1 - recover) * 1.56);
   }
 
   private animateReload() {

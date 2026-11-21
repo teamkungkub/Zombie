@@ -1,7 +1,7 @@
-export const equipmentOrder = ["gun", "grenade", "medkit", "energy"] as const;
+export const equipmentOrder = ["gun", "katana", "grenade", "medkit", "energy"] as const;
 export type HeldItem = (typeof equipmentOrder)[number];
-export type Equipment = Exclude<HeldItem, "gun">;
 export const equipmentLimits = { grenade: 3, medkit: 2, energy: 2 } as const;
+export type Equipment = keyof typeof equipmentLimits;
 export const healingSeconds = 1.5;
 export const injectionTiming = {
   liftEnd: 0.33,
@@ -46,7 +46,7 @@ export function nextHeldItem(
   const index = equipmentOrder.indexOf(current);
   for (let step = 1; step < equipmentOrder.length; step++) {
     const item = equipmentOrder[(index + step) % equipmentOrder.length];
-    if (item === "gun" || stock[item] > 0) return item;
+    if (item === "gun" || item === "katana" || stock[item] > 0) return item;
   }
   return "gun";
 }

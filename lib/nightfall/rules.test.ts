@@ -222,15 +222,17 @@ test("later stages add a runner, then flyers, then ranged enemies", () => {
   assert.ok(!plan(3).includes("spitter") && plan(4).includes("spitter"));
 });
 
-test("Q skips empty supplies and wraps back to the gun", () => {
-  const stock = { grenade: 0, medkit: 2, energy: 1 };
-  assert.equal(nextHeldItem("gun", stock), "medkit");
+test("Q always includes the katana and cycles through stocked items back to the gun", () => {
+  const stock = { grenade: 1, medkit: 2, energy: 1 };
+  assert.equal(nextHeldItem("gun", stock), "katana");
+  assert.equal(nextHeldItem("katana", stock), "grenade");
+  assert.equal(nextHeldItem("grenade", stock), "medkit");
   assert.equal(nextHeldItem("medkit", stock), "energy");
   assert.equal(nextHeldItem("energy", stock), "gun");
-  assert.equal(
-    nextHeldItem("gun", { grenade: 0, medkit: 0, energy: 0 }),
-    "gun",
-  );
+  assert.equal(nextHeldItem("katana", { ...stock, grenade: 0 }), "medkit");
+  const empty = { grenade: 0, medkit: 0, energy: 0 };
+  assert.equal(nextHeldItem("gun", empty), "katana");
+  assert.equal(nextHeldItem("katana", empty), "gun");
   assert.equal(throwCharge(-1), 0);
   assert.ok(throwCharge(0.75) > throwCharge(0.25));
   assert.equal(throwCharge(2), 1);
