@@ -9,6 +9,7 @@ import {
   drinkingSeconds,
   drinkOpeningSeconds,
   equipmentLimits,
+  equipmentDropTuning,
   equipmentOrder,
   healAmount,
   healingSeconds,
@@ -17,6 +18,13 @@ import {
   throwChargeSeconds,
 } from "../lib/nightfall/equipment.ts";
 import {
+  bossCombos,
+  bossComboTiming,
+  bossMortarSpread,
+  bossCrashRadius,
+  bossUltimateHealth,
+  bossUltimateMortarSpread,
+  bossUltimates,
   bosses,
   enemyTypes,
   GATE_Z,
@@ -29,6 +37,7 @@ import {
 } from "../lib/nightfall/rules.ts";
 import {
   ammoDropChance,
+  bossWeaponPools,
   dropRounds,
   shotgunShellSeconds,
   surfaceImpactTuning,
@@ -58,6 +67,14 @@ const config = {
     hunterPounce,
   },
   bosses,
+  bossCombos,
+  bossComboTiming,
+  bossMortarSpread,
+  bossCrashRadius,
+  bossUltimateHealth,
+  bossUltimateMortarSpread,
+  bossUltimates,
+  bossWeaponPools,
   zones: zones.map((zone, i) => ({
     ...zone,
     checkpoint: nextCheckpoint(i + 1),
@@ -67,6 +84,7 @@ const config = {
   equipment: {
     order: equipmentOrder,
     limits: equipmentLimits,
+    drops: equipmentDropTuning,
     knife: knifeTuning,
     healAmount,
     healingSeconds,

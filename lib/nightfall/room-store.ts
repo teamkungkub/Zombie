@@ -75,7 +75,8 @@ function pose(value: unknown): value is RoomPose {
 function validBoss(value: unknown) {
   return value === null || (object(value) && knownKey(bosses, value.kind) &&
     between(value.health, 0, 20_000) && between(value.maxHealth, 0, 20_000) &&
-    typeof value.warning === "boolean");
+    typeof value.warning === "boolean" && (value.followup === undefined || typeof value.followup === "boolean") &&
+    (value.ultimate === undefined || typeof value.ultimate === "boolean"));
 }
 
 function validZombie(value: unknown): boolean {
@@ -87,7 +88,9 @@ function validZombie(value: unknown): boolean {
 
 function validStrike(value: unknown) {
   return object(value) && between(value.x, -32, 32) && between(value.z, -32, 32) &&
-    between(value.dx, -1, 1) && between(value.dz, -1, 1) && between(value.length, 0, 32);
+    between(value.dx, -1, 1) && between(value.dz, -1, 1) && between(value.length, 0, 32) &&
+    (value.followup === undefined || typeof value.followup === "boolean") &&
+    (value.ultimate === undefined || typeof value.ultimate === "boolean");
 }
 
 function worldSnapshot(value: unknown): value is RoomWorld {
@@ -98,6 +101,9 @@ function worldSnapshot(value: unknown): value is RoomWorld {
     typeof value.gateOpen === "boolean" && typeof value.checkpoint === "boolean" &&
     typeof value.finished === "boolean" && typeof value.timedOut === "boolean" &&
     validBoss(value.boss) && (value.bossStrike === undefined || validStrike(value.bossStrike)) &&
+    (value.bossReward === undefined || (object(value.bossReward) &&
+      between(value.bossReward.x, -26, 26) && between(value.bossReward.z, -26, 26) &&
+      value.bossReward.weaponId !== "rifle" && knownKey(weapons, value.bossReward.weaponId))) &&
     (value.bolts === undefined || (Array.isArray(value.bolts) && value.bolts.length <= 80 &&
       value.bolts.every(bolt => object(bolt) && between(bolt.x, -64, 64) &&
         between(bolt.y, -10, 16) && between(bolt.z, -64, 64)))) &&

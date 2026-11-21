@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dodgeDistanceAt, dodgeTuning, movementInWorld } from "./movement.ts";
-import { healingSeconds, injectionPose, injectionTiming, nextHeldItem, throwCharge } from "./equipment.ts";
+import { healingSeconds, injectionPose, injectionTiming, nextHeldItem, rollEquipmentDrop, throwCharge } from "./equipment.ts";
 import { advanceZombieGait, blendZombieMotion, steerZombieVelocity, turnZombieToward, zombieCrawl, zombieCrawlThreshold, zombieCrawlTransition, zombieFallMotion, zombieGaits, zombieGaitPose, zombieImpactDirection, zombieImpactMotion, zombieLocalImpact } from "./zombie-motion.ts";
 import { hunterPounceHits, hunterPounceMotion, zombieMelee } from "./zombie-attack.ts";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion.ts";
@@ -11,6 +11,7 @@ import {
   loadShotgunShell,
   collectAmmoDrop,
   rollAmmoDrop,
+  rollBossWeapon,
   weapons,
   type Arsenal,
 } from "./weapons.ts";
@@ -22,6 +23,7 @@ import {
   buildNavigationField,
   chaseWaypoint,
   stagePlan,
+  stageEnemyScaling,
   stageLoadout,
   objectiveAt,
   nextCheckpoint,
@@ -30,6 +32,10 @@ import {
   zombieHitAmount,
   meleeStrikeHits,
   bossAttackHits,
+  bossCrashCenter,
+  bossMortarTargets,
+  bosses,
+  bossUltimates,
   nextStagePhase,
 } from "./rules.ts";
 
@@ -269,6 +275,63 @@ test("boss warning areas distinguish the charge lane, cone and circles", () => {
   assert.equal(bossAttackHits("spores", strike, 6, 2), true);
   assert.equal(bossAttackHits("spores", strike, -2, 0), false);
   assert.equal(bossAttackHits("charge", strike, 8.2, 0), false);
+});
+
+test("boss follow-ups add a safe inner circle, wider lanes and three distinct mortar targets", () => {
+  const opener = { x: 0, z: 0, dx: 1, dz: 0, length: 8 };
+  const followup = { ...opener, followup: true };
+  assert.equal(bossAttackHits("slam", followup, 2, 0), false);
+  assert.equal(bossAttackHits("slam", followup, 5, 0), true);
+  assert.equal(bossAttackHits("slam", followup, 6.3, 0), false);
+  assert.equal(bossAttackHits("charge", opener, 4, 1.5), false);
+  assert.equal(bossAttackHits("charge", followup, 4, 1.5), true);
+  assert.equal(bossAttackHits("spores", opener, 4, 3), false);
+  assert.equal(bossAttackHits("spores", followup, 4, 3), true);
+  assert.equal(bossAttackHits("spores", followup, -4, 3), false);
+  const targets = bossMortarTargets(followup);
+  assert.equal(targets.length, 3);
+  assert.ok(targets.every(({ x, z }) => bossAttackHits("mortar", followup, x, z)));
+  assert.equal(bossAttackHits("mortar", opener, 0, 4.5), false);
+  assert.equal(bossAttackHits("mortar", followup, 0, 4.5), true);
+  assert.equal(bossAttackHits("mortar", followup, 0, 5.1), false);
+});
+
+test("each ultimate uses its own attack pattern and shows a longer warning", () => {
+  const strike = { x: 2, z: 0, dx: 1, dz: 0, length: 14, ultimate: true };
+  assert.equal(bossAttackHits("slam", strike, 2, 0), true);
+  assert.equal(bossAttackHits("slam", strike, 10.3, 0), false);
+  assert.equal(bossAttackHits("charge", strike, 9, 1.9), true);
+  assert.equal(bossAttackHits("charge", strike, 9, 2.1), false);
+  assert.deepEqual(bossCrashCenter(strike), { x: 16, z: 0 });
+  assert.equal(bossAttackHits("spores", strike, -7, 0), true);
+  assert.equal(bossAttackHits("spores", strike, 2, 9), false);
+  const meteors = bossMortarTargets(strike);
+  assert.equal(meteors.length, 5);
+  assert.ok(meteors.every(({ x, z }) => bossAttackHits("mortar", strike, x, z)));
+  assert.equal(bossAttackHits("mortar", strike, 7, 5), false);
+  for (const kind of ["slam", "charge", "mortar", "spores"] as const) {
+    assert.ok(bossUltimates[kind].windup > bosses[kind].windup);
+  }
+});
+
+test("late stages keep scaling without increasing the live zombie limit", () => {
+  const early = stageEnemyScaling(13);
+  const late = stageEnemyScaling(29);
+  assert.ok(late.health > early.health && late.damage > early.damage && late.speed > early.speed);
+  const first = stagePlan(13, "survivor");
+  const second = stagePlan(29, "survivor");
+  assert.equal(first.bossKind, second.bossKind);
+  assert.equal(first.enemies.length, second.enemies.length);
+  assert.ok(second.bossHealth > first.bossHealth && second.ammo > first.ammo && second.time > first.time);
+});
+
+test("equipment drops recover from dry streaks and bosses have distinct weapon pools", () => {
+  assert.equal(rollEquipmentDrop(0, () => 0.99), null);
+  assert.equal(rollEquipmentDrop(2, () => 0.99), "energy");
+  assert.equal(rollEquipmentDrop(0, () => 0), "medkit");
+  assert.equal(rollBossWeapon("slam", () => 0), "sidearm");
+  assert.equal(rollBossWeapon("slam", () => 0.99), "shotgun");
+  assert.equal(rollBossWeapon("spores", () => 0), "marksman");
 });
 
 test("zombie drops are infrequent, small, and go only to the matching reserve", () => {

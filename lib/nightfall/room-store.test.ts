@@ -95,6 +95,23 @@ test("only a host owns world snapshots and enemy damage while guests can report 
   const hits = sync(host, { since: 1 }).events;
   assert.deepEqual(hits[0], { id: 3, type: "zombie-hit", target: 1, amount: 30, source: guest.playerId, impact: { zone: "right-leg", x: 0, z: -1 } });
   assert.deepEqual(hits[1], { id: 4, type: "zombie-hit", target: 1, amount: 30, source: guest.playerId });
+  const followup: RoomWorld = {
+    ...world,
+    boss: { kind: "slam", health: 180, maxHealth: 480, warning: true, followup: true },
+    bossStrike: { x: 2, z: 15, dx: 0, dz: 1, length: 3.5, followup: true },
+  };
+  sync(host, { world: followup });
+  assert.deepEqual(sync(guest).room.world, followup);
+  const ultimate: RoomWorld = {
+    ...followup,
+    boss: { kind: "slam", health: 95, maxHealth: 480, warning: true, ultimate: true },
+    bossStrike: { ...followup.bossStrike!, followup: false, ultimate: true },
+  };
+  sync(host, { world: ultimate });
+  assert.deepEqual(sync(guest).room.world, ultimate);
+  const reward: RoomWorld = { ...world, bossReward: { x: 2, z: 15, weaponId: "shotgun" } };
+  sync(host, { world: reward });
+  assert.deepEqual(sync(guest).room.world, reward);
   assert.equal(sync(host, { world: { ...world, finished: true } }).room.status, "ended");
 });
 

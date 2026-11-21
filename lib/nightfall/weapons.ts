@@ -6,6 +6,18 @@ export const weaponSlots = [
   "marksman",
 ] as const;
 export type WeaponId = (typeof weaponSlots)[number];
+export type BonusWeapon = Exclude<WeaponId, "rifle">;
+export const bossWeaponPools = {
+  slam: ["sidearm", "shotgun"],
+  charge: ["shotgun", "lmg"],
+  mortar: ["lmg", "marksman", "shotgun"],
+  spores: ["marksman", "lmg", "shotgun"],
+} as const satisfies Record<string, readonly BonusWeapon[]>;
+
+export function rollBossWeapon(kind: keyof typeof bossWeaponPools, random = Math.random): BonusWeapon {
+  const pool = bossWeaponPools[kind];
+  return pool[Math.floor(random() * pool.length)];
+}
 export type Ammo = { ammo: number; reserve: number };
 export type Arsenal = Partial<Record<WeaponId, Ammo>>;
 export const shotgunShellSeconds = 0.58;

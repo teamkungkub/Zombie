@@ -14,7 +14,7 @@ import { WeaponHands } from "./weapon-hands";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion";
 import { RoomAvatars } from "./room-avatars";
 import { RenderBudget, renderPixelLimit } from "./render-quality";
-import { characters, type CharacterId, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomView, type RoomWorld, type RoomZombie, type ZombieGunImpact, type ZombieHitZone } from "./room-protocol";
+import { characters, type BossReward, type CharacterId, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomView, type RoomWorld, type RoomZombie, type ZombieGunImpact, type ZombieHitZone } from "./room-protocol";
 import {
   boostSeconds,
   drinkingSeconds,
@@ -25,6 +25,7 @@ import {
   injectionTiming,
   knifeTuning,
   nextHeldItem,
+  rollEquipmentDrop,
   throwCharge,
   type Equipment,
   type HeldItem,
@@ -35,6 +36,7 @@ import {
   shotgunShellSeconds,
   collectAmmoDrop,
   rollAmmoDrop,
+  rollBossWeapon,
   weapons,
   weaponSlots,
   type Ammo,
@@ -48,13 +50,22 @@ import {
   chaseWaypoint,
   reloadAmmo,
   stagePlan,
+  bossCombos,
+  bossComboTiming,
+  bossCrashCenter,
+  bossCrashRadius,
+  bossMortarTargets,
+  bossUltimateHealth,
+  bossUltimates,
   bosses,
   bossAttackHits,
+  bossAttackWidth,
   nextStagePhase,
   clearSegment,
   type BossKind,
   type BossStrike,
   stageLoadout,
+  stageEnemyScaling,
   nextCheckpoint,
   crossedGate,
   zoneForStage,
@@ -115,17 +126,13 @@ export type Snapshot = {
   timedOut: boolean;
   gateOpen: boolean;
   spitWarning: boolean;
-  boss: {
-    kind: BossKind;
-    health: number;
-    maxHealth: number;
-    warning: boolean;
-  } | null;
+  boss: RoomWorld["boss"];
 };
 type LootKind = "grenade" | "medkit" | "energy";
 type Pickup =
   | { kind: LootKind; mesh: THREE.Group }
-  | { kind: "ammo"; mesh: THREE.Group; drop: AmmoDrop };
+  | { kind: "ammo"; mesh: THREE.Group; drop: AmmoDrop }
+  | { kind: "weapon"; mesh: THREE.Group; weaponId: BossReward["weaponId"] };
 const loot = {
   grenade: {
     color: "#e8aa65",
@@ -194,9 +201,13 @@ type Boss = {
   kind: BossKind;
   maxHealth: number;
   readyAt: number;
-  dash: { strike: BossStrike; startedAt: number } | null;
+  nextIsFollowup: boolean;
+  ultimateUsed: boolean;
+  lastStrikeAt?: number;
+  dash: { strike: BossStrike; startedAt: number; advanced: number; hits: Set<string | null> } | null;
   attack: {
     strike: BossStrike;
+    startedAt: number;
     resolvesAt: number;
     marker: THREE.Group;
   } | null;
@@ -251,6 +262,7 @@ export class NightfallEngine {
   private gateProgress = 0;
   private weapon = new THREE.Group();
   private knifeView = new THREE.Group();
+  private updateKatanaArms?: () => void;
   private knifeSwing: { startedAt: number; resolved: boolean } | null = null;
   private weaponModels = new Map<WeaponId, THREE.Group>();
   private arsenal: Arsenal = {
@@ -277,7 +289,7 @@ export class NightfallEngine {
   private lastRoomMotion: { stamp?: number; received: number } | null = null;
   private roomNavigation = new Map<string, NavigationField>();
   private combatTarget: { id: string; eye: THREE.Vector3 } | null = null;
-  private roomBossMarker: { key: string; mesh: THREE.Group } | null = null;
+  private roomBossMarker: { key: string; mesh: THREE.Group; kind: BossKind; strike: BossStrike; received: number } | null = null;
   private roomBolts: THREE.Mesh[] = [];
   private zombieModels = new ZombieModels();
   private boss: Boss | null = null;
@@ -356,6 +368,9 @@ export class NightfallEngine {
   private sprintExhausted = false;
   private checkpoint: THREE.Group | null = null;
   private pickups: Pickup[] = [];
+  private bossReward?: BossReward;
+  private equipmentDropMisses = 0;
+  private stageScaling = stageEnemyScaling(1);
   private elapsed = 0;
   private lastTime = 0;
   private lastSnapshot = 0;
@@ -1413,19 +1428,31 @@ export class NightfallEngine {
     );
     mesh.position.set(0, 0.077, -0.13);
     rig.add(mesh);
+    const edge = new THREE.Shape();
+    edge.moveTo(-0.023, 0);
+    edge.quadraticCurveTo(-0.026, 0.49, -0.107, 0.714);
+    edge.quadraticCurveTo(-0.013, 0.49, -0.01, 0);
+    edge.closePath();
+    const polishedEdge = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(edge, { depth: 0.008, bevelEnabled: false, curveSegments: 12 }),
+      this.material("#e6e9de", 0.3, 0.24),
+    );
+    polishedEdge.position.copy(mesh.position);
+    polishedEdge.position.z -= 0.001;
+    rig.add(polishedEdge);
     const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.069, 0.069, 0.013, 12),
       this.material("#887451", 0.48, 0.5));
     guard.position.set(0, 0.05, -0.126);
     guard.scale.z = 0.71;
     rig.add(guard);
     this.box(0.052, 0.028, 0.025, "#a28b59", 0, 0.068, -0.126, rig);
-    this.box(0.047, 0.205, 0.045, "#252a26", 0, -0.061, -0.126, rig);
-    for (let i = 0; i < 7; i++) {
-      const wrap = this.box(0.05, 0.014, 0.049, "#5f403c", 0, 0.026 - i * 0.028, -0.126, rig);
+    this.box(0.047, 0.25, 0.043, "#252a26", 0, -0.079, -0.126, rig);
+    for (let i = 0; i < 9; i++) {
+      const wrap = this.box(0.05, 0.012, 0.045, "#5f403c", 0, 0.031 - i * 0.027, -0.126, rig);
       wrap.rotation.z = i % 2 ? 0.3 : -0.3;
     }
-    this.box(0.053, 0.019, 0.052, "#62563c", 0, -0.168, -0.126, rig);
-    this.weaponHands.addGrip(rig, [0, -0.063, -0.123]);
+    this.box(0.053, 0.019, 0.046, "#62563c", 0, -0.204, -0.126, rig);
+    this.updateKatanaArms = this.weaponHands.addKatanaGrip(rig, -0.126);
     rig.traverse(part => { if (part instanceof THREE.Mesh) part.castShadow = false; });
     rig.visible = false;
   }
@@ -1777,7 +1804,7 @@ export class NightfallEngine {
     const zombie: Zombie = {
       ...model,
       networkId,
-      health: stats.health,
+      health: Math.round(stats.health * this.stageScaling.health),
       phase,
       gait: { phase: phase / (Math.PI * 2), travel: 0, weight: 0, vx: 0, vz: 0 },
       speed: stats.speed * (0.9 + Math.random() * 0.2),
@@ -1820,6 +1847,7 @@ export class NightfallEngine {
     this.clearZombies();
     this.clearObjectives();
     this.state = { ...initial, status: "playing" };
+    this.equipmentDropMisses = 0;
     this.resetArsenal();
     this.camera.position.set(this.room ? (this.room.slot - 1.5) * 1.2 : 0, 1.7, 17);
     this.yaw = 0;
@@ -1934,8 +1962,10 @@ export class NightfallEngine {
       boss: this.boss ? {
         kind: this.boss.kind, health: Math.max(0, this.boss.zombie.health),
         maxHealth: this.boss.maxHealth, warning: !!this.boss.attack,
+        followup: this.boss.attack?.strike.followup, ultimate: this.boss.attack?.strike.ultimate,
       } : boss,
       bossStrike: this.boss?.attack?.strike,
+      bossReward: this.bossReward,
       bolts: this.spitBolts.map(({ mesh: { position: p } }) => ({ x: round(p.x), y: round(p.y), z: round(p.z) })),
       zombies: this.zombies.filter((z) => z.group.visible).map((z) => ({
         id: z.networkId, kind: z.kind, health: Math.max(0, round(z.health)),
@@ -1978,6 +2008,10 @@ export class NightfallEngine {
     if (world.checkpoint && !this.checkpoint) this.showCheckpoint();
     if (this.checkpoint) this.checkpoint.visible = !gateOpen;
     this.syncRoomBossMarker(boss?.kind, world.bossStrike);
+    if (world.bossReward && !this.bossReward) {
+      this.placeBossReward(world.bossReward);
+      this.dropLoot(new THREE.Vector3(world.bossReward.x, 0, world.bossReward.z), true);
+    }
     this.syncRoomBolts(world.bolts ?? []);
     const last = this.lastRoomMotion;
     if (!world.finished && world.motionTime !== undefined && last?.stamp === world.motionTime) return;
@@ -2001,7 +2035,11 @@ export class NightfallEngine {
     if (this.roomBossMarker?.key === key) return;
     if (this.roomBossMarker) this.removeMarker(this.roomBossMarker.mesh);
     this.roomBossMarker = null;
-    if (kind && strike) this.roomBossMarker = { key, mesh: this.bossMarker(kind, strike) };
+    if (kind && strike) {
+      const mesh = this.bossMarker(kind, strike);
+      this.roomBossMarker = { key, mesh, kind, strike, received: performance.now() };
+      this.playBossWarning(kind, mesh.position, strike.ultimate);
+    }
   }
 
   private syncRoomBolts(bolts: NonNullable<RoomWorld["bolts"]>) {
@@ -2029,8 +2067,9 @@ export class NightfallEngine {
   private applyRoomZombie(frame: RoomZombie, previous: Zombie | undefined, duration: number) {
     const zombie = previous ?? this.zombie(frame.x, frame.z, frame.kind, frame.id);
     if (previous && zombie.health > 0 && frame.health <= 0) {
-      this.dropAmmo(zombie.group.position);
-      this.dropLoot(zombie.group.position);
+      const position = new THREE.Vector3(frame.x, frame.y, frame.z);
+      this.dropAmmo(position);
+      this.dropLoot(position);
     }
     zombie.health = frame.health;
     zombie.group.scale.set(frame.scale * enemyTypes[frame.kind].width, frame.scale, frame.scale * enemyTypes[frame.kind].width);
@@ -2525,6 +2564,7 @@ export class NightfallEngine {
     this.clearObjectives();
     const plan = stagePlan(this.state.wave, this.settings.difficulty);
     this.stageBoss = plan;
+    this.stageScaling = stageEnemyScaling(this.state.wave);
     const count = plan.enemies.length;
     const rifle = this.arsenal.rifle!;
     this.arsenal.rifle = stageLoadout(rifle.ammo, rifle.reserve, plan.ammo);
@@ -2577,12 +2617,19 @@ export class NightfallEngine {
     this.checkpoint = null;
     for (const pickup of this.pickups) this.removeMarker(pickup.mesh);
     this.pickups = [];
+    this.bossReward = undefined;
   }
 
   private placeWeaponCrate(id: Exclude<WeaponId, "rifle">) {
-    const group = new THREE.Group();
-    const gear = new THREE.MeshBasicMaterial({ color: "#9eafd0" });
+    const group = this.makeWeaponCrate(id, false);
     group.position.set(2.8, 0, this.state.wave === 1 ? 14 : 17);
+    this.world.add(group);
+    this.weaponCrate = { id, group };
+  }
+
+  private makeWeaponCrate(id: BossReward["weaponId"], reward: boolean) {
+    const group = new THREE.Group();
+    const gear = new THREE.MeshBasicMaterial({ color: reward ? "#ffc268" : "#9eafd0" });
     const crate = new THREE.Mesh(
       new THREE.BoxGeometry(0.94, 0.27, 0.53),
       new THREE.MeshBasicMaterial({ color: "#38495b" }),
@@ -2596,10 +2643,10 @@ export class NightfallEngine {
     group.add(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.08), gear));
     group.children[2].position.y = 0.31;
     const label = this.label(
-      weapons[id].caliber,
+      reward ? `BOSS DROP / ${weapons[id].caliber}` : weapons[id].caliber,
       "#e1ebff",
       "#223346",
-      1.18,
+      reward ? 2.1 : 1.18,
       0.3,
       0,
       0.88,
@@ -2607,8 +2654,15 @@ export class NightfallEngine {
       group,
     );
     label.userData.billboard = true;
-    this.world.add(group);
-    this.weaponCrate = { id, group };
+    return group;
+  }
+
+  private placeBossReward(reward: BossReward) {
+    this.bossReward = reward;
+    const mesh = this.makeWeaponCrate(reward.weaponId, true);
+    mesh.position.set(reward.x, 0, reward.z);
+    this.world.add(mesh);
+    this.pickups.push({ kind: "weapon", mesh, weaponId: reward.weaponId });
   }
 
   private updateWeaponCrate() {
@@ -2622,24 +2676,27 @@ export class NightfallEngine {
     const label = group.children.find((child) => child.userData.billboard);
     if (label) label.rotation.y = this.yaw;
     this.state.weaponPickup = { id, distance: Math.ceil(distance) };
-    if (distance > 1.25) return;
-    const result = collectWeapon(this.arsenal, id);
-    if (!result.unlocked && result.added === 0) return;
-    if (result.unlocked) this.switchWeapon(id);
-    this.state.message = result.unlocked
-      ? `เก็บ${weapons[id].name}แล้ว · กด ${weaponSlots.indexOf(id) + 1} เพื่อสลับ`
-      : `กระสุน${weapons[id].name} +${result.added}`;
+    if (distance > 1.25 || !this.collectWeaponPickup(id)) return;
     this.removeMarker(group);
     this.weaponCrate = null;
     this.state.weaponPickup = null;
     this.publish();
   }
 
-  private dropLoot(position: THREE.Vector3) {
-    // Rotate through all three pickups so consecutive kills guarantee variety.
-    if (this.state.kills % 2 === 0 && this.state.remaining > 0) return;
-    const kinds: LootKind[] = ["grenade", "medkit", "energy"];
-    const kind = kinds[Math.floor((this.state.kills - 1) / 2) % kinds.length];
+  private collectWeaponPickup(id: BossReward["weaponId"]) {
+    const result = collectWeapon(this.arsenal, id);
+    if (!result.unlocked && result.added === 0) return false;
+    if (result.unlocked) this.switchWeapon(id);
+    this.state.message = result.unlocked
+      ? `เก็บ${weapons[id].name}แล้ว · กด ${weaponSlots.indexOf(id) + 1} เพื่อสลับ`
+      : `กระสุน${weapons[id].name} +${result.added}`;
+    return true;
+  }
+
+  private dropLoot(position: THREE.Vector3, defeatedBoss = false) {
+    const kind = defeatedBoss ? "medkit" : rollEquipmentDrop(this.equipmentDropMisses);
+    this.equipmentDropMisses = kind ? 0 : this.equipmentDropMisses + 1;
+    if (!kind) return;
     const mesh = new THREE.Group();
     mesh.position.set(position.x, 0.35, position.z);
     mesh.add(this.equipmentModel(kind));
@@ -2691,7 +2748,7 @@ export class NightfallEngine {
   }
 
   private defeat(zombie: Zombie) {
-    const defeatedBoss = this.boss?.zombie === zombie;
+    const defeatedBoss = this.boss?.zombie === zombie ? this.boss.kind : null;
     zombie.dead = this.elapsed;
     zombie.death = {
       start: this.captureZombieMotion(zombie),
@@ -2703,8 +2760,14 @@ export class NightfallEngine {
     this.state.kills++;
     this.state.remaining--;
     this.dropAmmo(zombie.group.position);
-    this.dropLoot(zombie.group.position);
-    const phase = nextStagePhase(this.state.remaining, defeatedBoss);
+    this.dropLoot(zombie.group.position, !!defeatedBoss);
+    if (defeatedBoss) {
+      const { x, z } = zombie.group.position;
+      const spot = [[x + 2.6, z], [x - 2.6, z], [x, z + 2.6], [x, z - 2.6]]
+        .find(([px, pz]) => canOccupy(px, pz, this.obstacles) && clearSegment(x, z, px, pz, this.obstacles));
+      this.placeBossReward({ x: spot?.[0] ?? x, z: spot?.[1] ?? z, weaponId: rollBossWeapon(defeatedBoss) });
+    }
+    const phase = nextStagePhase(this.state.remaining, !!defeatedBoss);
     if (phase === "combat") return;
     if (phase === "boss") {
       this.spawnBoss();
@@ -2714,7 +2777,7 @@ export class NightfallEngine {
     this.showCheckpoint();
     this.deadline = this.activeTime + 25;
     this.state.timeLeft = 25;
-    this.state.message = "ชนะบอสแล้ว · ไปวงสีเขียวเพื่อเปิดประตู";
+    this.state.message = "ชนะบอสแล้ว · เก็บกล่องปืนสีทองก่อนเข้าวงสีเขียว";
   }
 
   private showCheckpoint() {
@@ -2794,6 +2857,8 @@ export class NightfallEngine {
       kind,
       maxHealth: plan.bossHealth,
       readyAt: this.elapsed + 1.4,
+      nextIsFollowup: false,
+      ultimateUsed: false,
       dash: null,
       attack: null,
     };
@@ -2810,13 +2875,15 @@ export class NightfallEngine {
 
   private bossMarker(kind: BossKind, strike: BossStrike) {
     const spec = bosses[kind];
+    const width = bossAttackWidth(kind, strike);
+    const color = strike.ultimate ? bossUltimates[kind].color : spec.color;
     const marker = new THREE.Group();
     marker.position.set(strike.x, 0.115, strike.z);
     const shape = new THREE.Shape();
     const angle = Math.atan2(strike.dz, strike.dx);
     if (kind === "charge") {
-      const sideX = -strike.dz * spec.width,
-        sideZ = strike.dx * spec.width;
+      const sideX = -strike.dz * width,
+        sideZ = strike.dx * width;
       const endX = strike.dx * strike.length,
         endZ = strike.dz * strike.length;
       shape.moveTo(sideX, -sideZ);
@@ -2826,35 +2893,58 @@ export class NightfallEngine {
     } else if (kind === "spores") {
       shape.moveTo(0, 0);
       for (let i = 0; i <= 24; i++) {
-        const a = angle - spec.width + (2 * spec.width * i) / 24;
+        const a = angle - width + (2 * width * i) / 24;
         shape.lineTo(Math.cos(a) * strike.length, -Math.sin(a) * strike.length);
       }
     } else {
-      shape.absarc(0, 0, spec.width, 0, Math.PI * 2, false);
+      shape.absarc(0, 0, width, 0, Math.PI * 2, false);
+      if (kind === "slam" && strike.followup && !strike.ultimate) {
+        const safeCenter = new THREE.Path();
+        safeCenter.absarc(0, 0, spec.width, 0, Math.PI * 2, true);
+        shape.holes.push(safeCenter);
+      }
     }
     shape.closePath();
-    const mesh = new THREE.Mesh(
-      new THREE.ShapeGeometry(shape),
-      new THREE.MeshBasicMaterial({
-        color: spec.color,
-        transparent: true,
-        opacity: 0.4,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    mesh.rotation.x = -Math.PI / 2;
-    marker.add(mesh);
-    if (kind === "mortar") {
-      const ember = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.35, 1),
-        new THREE.MeshBasicMaterial({ color: "#ffb65f" }),
+    const targets = kind === "mortar" ? bossMortarTargets(strike) :
+      strike.ultimate && kind === "charge" ? [strike, bossCrashCenter(strike)] :
+      strike.ultimate && kind === "spores" ? [strike, strike] : [strike];
+    for (const [index, target] of targets.entries()) {
+      const area = new THREE.Group();
+      area.position.set(target.x - strike.x, index * 0.002, target.z - strike.z);
+      if (kind === "spores" && index === 1) area.rotation.y = Math.PI;
+      const geometry = kind === "charge" && index === 1 ?
+        new THREE.CircleGeometry(bossCrashRadius, 40) : new THREE.ShapeGeometry(shape);
+      const floor = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity: strike.ultimate ? 0.56 : strike.followup ? 0.48 : 0.35,
+          depthWrite: false, side: THREE.DoubleSide,
+        }),
       );
-      ember.position.y = 6;
-      marker.add(ember);
+      floor.rotation.x = -Math.PI / 2;
+      area.add(floor);
+      if (kind === "mortar") {
+        const ember = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.35, 1),
+          new THREE.MeshBasicMaterial({ color: "#ffb65f" }),
+        );
+        ember.position.y = strike.ultimate ? 8 + index * 0.4 : 6;
+        area.add(ember);
+      }
+      marker.add(area);
     }
     this.world.add(marker);
     return marker;
+  }
+
+  private animateBossMarker(kind: BossKind, strike: BossStrike, marker: THREE.Group, progress: number) {
+    for (const [index, area] of marker.children.entries()) {
+      const floor = area.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+      const startOpacity = strike.ultimate ? 0.56 : strike.followup ? 0.48 : 0.35;
+      const pulse = strike.ultimate ? 0.09 * Math.sin(progress * Math.PI * 6) : 0;
+      floor.material.opacity = THREE.MathUtils.lerp(startOpacity, 0.8, progress) + pulse;
+      if (kind === "mortar") area.children[1].position.y = 0.2 + (strike.ultimate ? 7.8 + index * 0.4 : 5.8) * (1 - progress);
+    }
   }
 
   private updateBoss(boss: Boss, dt: number) {
@@ -2863,74 +2953,84 @@ export class NightfallEngine {
     const p = zombie.group.position,
       player = this.combatTarget?.eye ?? this.camera.position;
     if (boss.dash) {
-      const { strike, startedAt } = boss.dash;
-      const fraction = Math.min(1, (this.elapsed - startedAt) / 0.3);
-      p.x = strike.x + strike.dx * strike.length * fraction;
-      p.z = strike.z + strike.dz * strike.length * fraction;
+      const dash = boss.dash;
+      const { strike, startedAt } = dash;
+      const fraction = Math.min(1, (this.elapsed - startedAt) / bossComboTiming.chargeSeconds);
+      const travel = strike.length * fraction;
+      const sweep = { ...strike, x: p.x, z: p.z, length: travel - dash.advanced };
+      p.x = strike.x + strike.dx * travel;
+      p.z = strike.z + strike.dz * travel;
+      dash.advanced = travel;
       zombie.gait.heading = Math.atan2(strike.dx, strike.dz);
+      this.poseBossAttack(boss, 1, 1);
+      if (sweep.length > 0) this.applyBossStrike(boss, sweep, dash.hits);
       if (fraction === 1) {
-        this.impact(p.clone().setY(0.27), spec.color, 0.55);
+        this.impact(p.clone().setY(0.27), strike.ultimate ? bossUltimates[kind].color : spec.color, strike.ultimate ? 1.15 : 0.55);
+        if (strike.ultimate) {
+          this.playSpatialCue("blast", p, p.distanceTo(this.camera.position));
+          this.applyBossStrike(boss, strike, dash.hits, true);
+        }
         boss.dash = null;
+        boss.lastStrikeAt = this.elapsed;
+        if (boss.nextIsFollowup) boss.readyAt = this.elapsed + bossComboTiming.gap;
       }
       return;
     }
     if (boss.attack) {
-      const { strike, marker, resolvesAt } = boss.attack;
-      const progress = 1 - (resolvesAt - this.elapsed) / spec.windup;
-      (
-        marker.children[0] as THREE.Mesh<
-          THREE.ShapeGeometry,
-          THREE.MeshBasicMaterial
-        >
-      ).material.opacity = 0.32 + Math.max(0, progress) * 0.36;
-      if (kind === "mortar")
-        marker.children[1].position.y = 0.2 + 5.8 * Math.max(0, 1 - progress);
+      const { strike, marker, resolvesAt, startedAt } = boss.attack;
+      const progress = THREE.MathUtils.clamp((this.elapsed - startedAt) / (resolvesAt - startedAt), 0, 1);
+      this.animateBossMarker(kind, strike, marker, progress);
+      this.poseBossAttack(boss, THREE.MathUtils.smoothstep(progress, 0, 0.54), THREE.MathUtils.smoothstep(progress, 0.83, 1));
       zombie.gait.heading = Math.atan2(strike.dx, strike.dz);
       if (this.elapsed < resolvesAt) return;
       this.removeMarker(marker);
       boss.attack = null;
-      boss.readyAt = this.elapsed + spec.cooldown;
+      boss.nextIsFollowup = !strike.followup && !strike.ultimate;
+      const cooldown = boss.nextIsFollowup ? bossComboTiming.gap : spec.cooldown *
+        (zombie.health <= boss.maxHealth * bossComboTiming.enrageHealth ? bossComboTiming.enragedCooldown : 1);
+      boss.readyAt = this.elapsed + cooldown;
+      boss.lastStrikeAt = this.elapsed;
+      const cue = kind === "spores" ? "spit-release" : strike.ultimate && kind !== "charge" ? "blast" : "enemy-slam";
+      this.playSpatialCue(cue, p, p.distanceTo(this.camera.position));
       if (kind === "charge") {
-        boss.dash = { strike, startedAt: resolvesAt };
+        boss.dash = { strike, startedAt: this.elapsed, advanced: 0, hits: new Set() };
       } else {
-        this.impact(
-          new THREE.Vector3(strike.x, 0.27, strike.z),
-          spec.color,
-          0.55,
-        );
-      }
-      const multiplier = this.settings.difficulty === "recruit"
-        ? 0.72 : this.settings.difficulty === "veteran" ? 1.28 : 1;
-      for (const target of this.combatPlayers()) {
-        if (bossAttackHits(kind, strike, target.eye.x, target.eye.z) &&
-          (kind === "mortar" || clearSegment(strike.x, strike.z, target.eye.x, target.eye.z, this.obstacles)))
-          this.enemyDamagePlayer(Math.round(spec.damage * multiplier), target.id);
+        const targets = kind === "mortar" ? bossMortarTargets(strike) : [strike];
+        for (const target of targets) this.impact(new THREE.Vector3(target.x, 0.27, target.z),
+          strike.ultimate ? bossUltimates[kind].color : spec.color, strike.ultimate ? 1.05 : 0.65);
+        this.applyBossStrike(boss, strike);
       }
       return;
     }
     const dx = player.x - p.x,
       dz = player.z - p.z;
     const distance = Math.hypot(dx, dz);
-    const inRange =
-      distance <= spec.reach &&
-      (kind === "mortar" ||
-        clearSegment(p.x, p.z, player.x, player.z, this.obstacles));
-    if (inRange && distance > 0.001 && this.elapsed >= boss.readyAt) {
+    const ultimateSpec = bossUltimates[kind];
+    const clear = kind === "mortar" || (distance <= ultimateSpec.reach &&
+      clearSegment(p.x, p.z, player.x, player.z, this.obstacles));
+    const inRange = distance <= spec.reach && clear;
+    const ultimate = !boss.ultimateUsed && zombie.health <= boss.maxHealth * bossUltimateHealth &&
+      distance <= ultimateSpec.reach && clear && this.elapsed >= (boss.lastStrikeAt ?? -1) + 0.3;
+    if (ultimate || ((inRange || boss.nextIsFollowup) && this.elapsed >= boss.readyAt)) {
+      const followup = !ultimate && boss.nextIsFollowup;
       const strike: BossStrike = {
         x: p.x,
         z: p.z,
-        dx: dx / distance,
-        dz: dz / distance,
-        length: spec.reach,
+        dx: distance > 0.001 ? dx / distance : Math.sin(zombie.group.rotation.y),
+        dz: distance > 0.001 ? dz / distance : Math.cos(zombie.group.rotation.y),
+        length: ultimate ? ultimateSpec.reach : spec.reach,
+        followup,
+        ultimate,
       };
       if (kind === "mortar") {
         strike.x = player.x;
         strike.z = player.z;
       }
       if (kind === "charge") {
+        const reach = strike.length;
         strike.length = 0;
         while (
-          strike.length < spec.reach &&
+          strike.length < reach &&
           canOccupy(
             p.x + strike.dx * (strike.length + 0.25),
             p.z + strike.dz * (strike.length + 0.25),
@@ -2940,15 +3040,63 @@ export class NightfallEngine {
           strike.length += 0.25;
         }
       }
+      if (ultimate) boss.ultimateUsed = true;
+      const windup = ultimate ? ultimateSpec.windup : (followup ? bossCombos[kind].windup : spec.windup) *
+        (zombie.health <= boss.maxHealth * bossComboTiming.enrageHealth ? bossComboTiming.enragedWindup : 1);
       boss.attack = {
         strike,
-        resolvesAt: this.elapsed + spec.windup,
+        startedAt: this.elapsed,
+        resolvesAt: this.elapsed + windup,
         marker: this.bossMarker(kind, strike),
       };
+      this.playBossWarning(kind, p, ultimate);
       return;
+    }
+    if (boss.lastStrikeAt !== undefined) {
+      const recovery = 1 - THREE.MathUtils.smoothstep(this.elapsed - boss.lastStrikeAt, 0, 0.28);
+      if (recovery > 0) {
+        this.poseBossAttack(boss, recovery, 1);
+        return;
+      }
+      boss.lastStrikeAt = undefined;
     }
     if (!inRange || (distance > 2.2 && kind !== "mortar"))
       this.moveZombie(zombie, kind === "charge" ? 1.45 : 1.06, dt);
+  }
+
+  private playBossWarning(kind: BossKind, source: THREE.Vector3, ultimate = false) {
+    const cue = ultimate ? "boss-ultimate" : kind === "spores" ? "spit-warn" : kind === "charge" ? "enemy-crouch" : "enemy-brace";
+    this.playSpatialCue(cue, source, source.distanceTo(this.camera.position));
+  }
+
+  private applyBossStrike(boss: Boss, strike: BossStrike, hits?: Set<string | null>, crash = false) {
+    const { kind } = boss;
+    const multiplier = this.settings.difficulty === "recruit"
+      ? 0.72 : this.settings.difficulty === "veteran" ? 1.28 : 1;
+    const origin = crash ? bossCrashCenter(strike) : strike;
+    const damage = strike.ultimate ? bossUltimates[kind].damage : bosses[kind].damage;
+    for (const target of this.combatPlayers()) {
+      const { x, z } = target.eye;
+      const hit = crash ? Math.hypot(x - origin.x, z - origin.z) <= bossCrashRadius : bossAttackHits(kind, strike, x, z);
+      if (hits?.has(target.id) || !hit || (kind !== "mortar" && !clearSegment(origin.x, origin.z, x, z, this.obstacles))) continue;
+      hits?.add(target.id);
+      this.enemyDamagePlayer(Math.round(damage * multiplier), target.id);
+    }
+  }
+
+  private poseBossAttack(boss: Boss, blend: number, release: number) {
+    const { zombie, kind } = boss;
+    const lerp = THREE.MathUtils.lerp;
+    const reach = kind === "charge" ? lerp(0.48, -1.95, release) :
+      kind === "spores" ? lerp(-0.6, -1.42, release) : lerp(-2.95, -0.93, release);
+    const spread = kind === "spores" ? lerp(1.05, 0.7, release) : lerp(0.42, 0.1, release);
+    for (const [index, arm] of zombie.arms.entries()) {
+      arm.rotation.x = lerp(arm.rotation.x, reach, blend);
+      arm.rotation.z += (index === 0 ? -spread : spread) * blend;
+    }
+    const lean = kind === "charge" ? 0.65 : lerp(-0.25, 0.67, release);
+    zombie.rig.rotation.x = lerp(zombie.rig.rotation.x, lean, blend);
+    zombie.rig.position.y -= blend * (kind === "charge" ? lerp(0.23, 0.09, release) : release * 0.12);
   }
 
   private hurtPlayer(damage: number) {
@@ -3152,13 +3300,20 @@ export class NightfallEngine {
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const pickup = this.pickups[i];
       const { kind, mesh } = pickup;
-      mesh.position.y = 0.35 + 0.12 * Math.sin(this.elapsed * 4);
-      mesh.rotation.y = this.yaw;
+      if (kind === "weapon") {
+        const label = mesh.children.find((child) => child.userData.billboard);
+        if (label) label.rotation.y = this.yaw;
+      } else {
+        mesh.position.y = 0.35 + 0.12 * Math.sin(this.elapsed * 4);
+        mesh.rotation.y = this.yaw;
+      }
       if (
         Math.hypot(player.x - mesh.position.x, player.z - mesh.position.z) > 1.4
       )
         continue;
-      if (kind === "ammo") {
+      if (kind === "weapon") {
+        if (!this.collectWeaponPickup(pickup.weaponId)) continue;
+      } else if (kind === "ammo") {
         const { drop } = pickup;
         if (!collectAmmoDrop(this.arsenal, drop)) continue;
         this.state.message = `กระสุนสำรอง ${weapons[drop.weaponId].name} +${drop.rounds} นัด`;
@@ -3551,6 +3706,7 @@ export class NightfallEngine {
       | "enemy-brace"
       | "enemy-crouch"
       | "enemy-slam"
+      | "boss-ultimate"
       | "impact-concrete"
       | "impact-metal"
       | "fall",
@@ -3628,6 +3784,12 @@ export class NightfallEngine {
       texture(900, 0.065, tail, 0.06);
       texture(3250, 0.055, 0.045, 0.072, "bandpass");
       thump(bass, 0.21, tail * 0.68);
+    } else if (kind === "boss-ultimate") {
+      const proximity = 1 / (1 + distance * 0.055);
+      thump(154, 0.32 * proximity, 0.69);
+      texture(610, 0.24 * proximity, 0.25, 0, "bandpass");
+      texture(1260, 0.25 * proximity, 0.24, 0.31, "bandpass");
+      texture(2250, 0.22 * proximity, 0.19, 0.62, "bandpass");
     } else if (kind === "blast") {
       const attenuation = 1 / (1 + distance * 0.09);
       texture(850, 0.46 * attenuation, 0.27);
@@ -4027,7 +4189,7 @@ export class NightfallEngine {
         const speed =
           z.speed *
           difficulty *
-          (1 + Math.min(this.state.wave, 12) * 0.09);
+          this.stageScaling.speed;
         this.moveZombie(z, speed, dt);
       }
     }
@@ -4309,7 +4471,7 @@ export class NightfallEngine {
         : this.settings.difficulty === "veteran"
           ? 18
           : 12;
-    return Math.round(enemyTypes[zombie.kind].damage * base);
+    return Math.round(enemyTypes[zombie.kind].damage * base * this.stageScaling.damage);
   }
 
   private updateSpitter(zombie: Zombie, distance: number) {
@@ -4364,7 +4526,7 @@ export class NightfallEngine {
   private playSpatialCue(
     kind: "spit-warn" | "spit-release" | "enemy-step" | "enemy-swing" |
       "enemy-brace" | "enemy-crouch" | "enemy-slam" |
-      "impact-metal" | "impact-concrete" | "fall",
+      "impact-metal" | "impact-concrete" | "fall" | "boss-ultimate" | "blast",
     source: THREE.Vector3,
     distance: number,
     stepWeight?: number,
@@ -4410,7 +4572,7 @@ export class NightfallEngine {
               : this.settings.difficulty === "veteran"
                 ? 14
                 : 9;
-          this.enemyDamagePlayer(damage, hit.id);
+          this.enemyDamagePlayer(Math.round(damage * this.stageScaling.damage), hit.id);
           if (this.state.health === 0) return;
         }
       } else mesh.position.copy(end);
@@ -4503,6 +4665,11 @@ export class NightfallEngine {
     if (!guest && ((playing && this.state.status === "playing") || hostingWhilePaused || preview))
       this.updateZombies(dt, preview ? now / 1000 : this.elapsed, !preview);
     if (guest) {
+      const marker = this.roomBossMarker;
+      if (marker?.strike.ultimate) {
+        const progress = THREE.MathUtils.clamp((now - marker.received) / (bossUltimates[marker.kind].windup * 1000), 0, 1);
+        this.animateBossMarker(marker.kind, marker.strike, marker.mesh, progress);
+      }
       for (const zombie of this.zombies) {
         const target = this.roomZombieTargets.get(zombie.networkId);
         if (!target || target.age >= target.duration) continue;
@@ -4700,11 +4867,13 @@ export class NightfallEngine {
     const held = this.state.heldItem === "katana" && this.state.status !== "menu";
     this.knifeView.visible = held || swing !== null;
     this.weapon.visible = !held && swing === null;
-    const restX = Math.min(0.31, this.camera.aspect * 0.37);
+    const restX = Math.min(0.21, this.camera.aspect * 0.21);
+    const restRoll = Math.min(0.08, this.camera.aspect * 0.08);
     if (!swing) {
       if (held) {
-        this.knifeView.position.set(restX, -0.32 - this.sprintPose * 0.26, -0.68);
-        this.knifeView.rotation.set(-0.32 - this.sprintPose * 0.52, -0.24, 0.07);
+        this.knifeView.position.set(restX, -0.27 - this.sprintPose * 0.2, -0.67);
+        this.knifeView.rotation.set(-0.39 - this.sprintPose * 0.46, -0.14, restRoll);
+        this.updateKatanaArms?.();
       }
       return;
     }
@@ -4716,11 +4885,12 @@ export class NightfallEngine {
     const lift = smooth(age, 0, 0.09) * (1 - recover);
     this.knifeView.position.set(
       restX * (1 - 2 * cut * (1 - recover)),
-      (held ? -0.32 : -0.5) + lift * 0.26 - cut * (1 - recover) * 0.08,
-      (held ? -0.68 : -0.57) - lift * 0.1,
+      (held ? -0.27 : -0.48) + lift * 0.23 - cut * (1 - recover) * 0.06,
+      -0.67 - lift * 0.08,
     );
-    this.knifeView.rotation.set(-0.32 + lift * 0.22, -0.24 + cut * (1 - recover) * 0.72,
-      0.07 + lift * 0.44 - cut * (1 - recover) * 1.56);
+    this.knifeView.rotation.set(-0.39 + lift * 0.22, -0.14 + cut * (1 - recover) * 0.72,
+      restRoll + lift * 0.44 - cut * (1 - recover) * 1.38);
+    this.updateKatanaArms?.();
   }
 
   private animateReload() {
@@ -4795,6 +4965,8 @@ export class NightfallEngine {
       health: Math.max(0, this.boss.zombie.health),
       maxHealth: this.boss.maxHealth,
       warning: !!this.boss.attack,
+      followup: this.boss.attack?.strike.followup,
+      ultimate: this.boss.attack?.strike.ultimate,
     };
     const spitWarning = guest ? this.state.spitWarning : this.zombies.some(
       (zombie) =>

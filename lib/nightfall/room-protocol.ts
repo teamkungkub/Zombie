@@ -1,5 +1,5 @@
 import type { BossKind, BossStrike, EnemyType } from "./rules";
-import type { WeaponId } from "./weapons";
+import type { BonusWeapon, WeaponId } from "./weapons";
 
 export const characterIds = ["vanguard", "wraith", "ember"] as const;
 export type CharacterId = (typeof characterIds)[number];
@@ -13,6 +13,7 @@ export const characters = {
 export type RoomSession = { code: string; playerId: string; token: string };
 export type RoomPose = { x: number; y: number; z: number; yaw: number; pitch: number; alive: boolean; shot: number; wave?: number };
 export type RoomPlayer = { id: string; character: CharacterId; slot: number; pose: RoomPose | null };
+export type BossReward = { x: number; z: number; weaponId: BonusWeapon };
 export type RoomZombie = {
   id: number; kind: EnemyType; health: number;
   x: number; y: number; z: number; yaw: number; scale: number;
@@ -30,8 +31,9 @@ export type RoomWorld = {
   checkpoint: boolean;
   finished: boolean;
   timedOut: boolean;
-  boss: { kind: BossKind; health: number; maxHealth: number; warning: boolean } | null;
+  boss: { kind: BossKind; health: number; maxHealth: number; warning: boolean; followup?: boolean; ultimate?: boolean } | null;
   bossStrike?: BossStrike;
+  bossReward?: BossReward;
   bolts?: { x: number; y: number; z: number }[];
   zombies: RoomZombie[];
 };

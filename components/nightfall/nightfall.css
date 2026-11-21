@@ -2235,6 +2235,10 @@
   margin: 7px 0 0;
   color: #ffcfb1;
 }
+.boss-warning-ultimate {
+  color: #ffe28c;
+  font-weight: 700;
+}
 @media (max-width: 750px) {
   .boss-hud {
     top: 130px;

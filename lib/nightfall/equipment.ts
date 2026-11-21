@@ -2,6 +2,13 @@ export const equipmentOrder = ["gun", "katana", "grenade", "medkit", "energy"] a
 export type HeldItem = (typeof equipmentOrder)[number];
 export const equipmentLimits = { grenade: 3, medkit: 2, energy: 2 } as const;
 export type Equipment = keyof typeof equipmentLimits;
+export const equipmentDropTuning = { chance: 0.35, maxMisses: 2, items: ["medkit", "medkit", "grenade", "energy"] } as const;
+
+export function rollEquipmentDrop(misses: number, random = Math.random): Equipment | null {
+  if (misses < equipmentDropTuning.maxMisses && random() >= equipmentDropTuning.chance) return null;
+  const options = equipmentDropTuning.items;
+  return options[Math.floor(random() * options.length)];
+}
 export const healingSeconds = 1.5;
 export const injectionTiming = {
   liftEnd: 0.33,

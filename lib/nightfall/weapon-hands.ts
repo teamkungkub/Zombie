@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { oval, tapered, type Point } from "./viewmodel-geometry";
 
 export class WeaponHands {
@@ -66,6 +67,67 @@ export class WeaponHands {
     tapered(hand, this.glove, [0.022, 0.033, 0.048], [-0.033, 0.029, 0.061], 0.02, 0.014);
     tapered(hand, this.skin, [-0.033, 0.029, 0.061], [-0.056, 0.009, 0.047], 0.013, 0.01);
     model.add(hand);
+  }
+
+  addKatanaGrip(model: THREE.Group, handleZ: number) {
+    const up = new THREE.Vector3(0, 1, 0);
+    const reach = new THREE.Vector3();
+    const shoulder = new THREE.Vector3();
+    const axis = new THREE.Vector3();
+    const cameraToGrip = new THREE.Matrix4();
+    const arms = [1, -1].map((side) => {
+      const hand = new THREE.Group();
+      hand.name = side === 1 ? "katana-right-hand" : "katana-left-hand";
+      hand.position.set(0, side === 1 ? -0.012 : -0.125, handleZ);
+      model.add(hand);
+      const wrist: Point = [side * 0.075, -0.023, 0.028];
+      tapered(hand, this.glove, wrist, [side * 0.044, -0.009, 0.013], 0.031, 0.033);
+      oval(hand, this.glove, [side * 0.042, -0.004, 0.005], [0.027, 0.043, 0.028]);
+      oval(hand, this.padding, [side * 0.056, -0.008, 0.018], [0.017, 0.034, 0.022]);
+      for (let i = 0; i < 4; i++) {
+        const y = 0.026 - i * 0.018;
+        const curl = 0.026 - i * 0.002;
+        tapered(hand, this.glove, [side * 0.04, y, 0.016], [side * 0.026, y, 0.032], 0.01, 0.0095);
+        tapered(hand, this.glove, [side * 0.026, y, 0.032], [-side * 0.01, y - 0.002, 0.033], 0.0095, 0.0085);
+        tapered(hand, this.skin, [-side * 0.01, y - 0.002, 0.033], [-side * curl, y - 0.004, 0.015], 0.0085, 0.007);
+        oval(hand, this.skin, [-side * curl, y - 0.004, 0.015], [0.0075, 0.0075, 0.008]);
+      }
+      tapered(hand, this.glove, [side * 0.038, 0.022, -0.016], [side * 0.016, 0.043, -0.017], 0.015, 0.012);
+      tapered(hand, this.skin, [side * 0.016, 0.043, -0.017], [-side * 0.013, 0.04, -0.018], 0.012, 0.009);
+      oval(hand, this.skin, [-side * 0.013, 0.04, -0.018], [0.01, 0.009, 0.009]);
+      for (const material of [this.glove, this.skin]) {
+        const parts = hand.children.filter((part): part is THREE.Mesh =>
+          part instanceof THREE.Mesh && part.material === material,
+        );
+        const geometries = parts.map((part) => {
+          part.updateMatrix();
+          return part.geometry.clone().applyMatrix4(part.matrix);
+        });
+        const geometry = mergeGeometries(geometries);
+        for (const draft of geometries) draft.dispose();
+        if (!geometry) continue;
+        hand.add(new THREE.Mesh(geometry, material));
+        for (const part of parts) {
+          hand.remove(part);
+          part.geometry.dispose();
+        }
+      }
+      const sleeve = tapered(hand, this.sleeve, [0, -0.5, 0], [0, 0.5, 0], 0.061, 0.034);
+      return { hand, sleeve, side, wrist };
+    });
+
+    return () => {
+      model.updateMatrix();
+      cameraToGrip.copy(model.matrix).invert();
+      for (const { hand, sleeve, side, wrist } of arms) {
+        const elbow = shoulder.set(side * 0.35, -0.4, -0.24).applyMatrix4(cameraToGrip).sub(hand.position);
+        reach.set(...wrist);
+        axis.subVectors(reach, elbow);
+        sleeve.position.copy(elbow).addScaledVector(axis, 0.5);
+        sleeve.scale.y = axis.length();
+        sleeve.quaternion.setFromUnitVectors(up, axis.normalize());
+      }
+    };
   }
 
   grasp(curl: number, pinch = 0) {

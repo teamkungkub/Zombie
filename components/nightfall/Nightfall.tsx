@@ -8,7 +8,7 @@ import type {
   Difficulty,
 } from "../../lib/nightfall/engine";
 import "./nightfall.css";
-import { bosses, zoneForStage } from "../../lib/nightfall/rules";
+import { bossCombos, bosses, bossUltimates, zoneForStage } from "../../lib/nightfall/rules";
 import { weapons, weaponSlots } from "../../lib/nightfall/weapons";
 import { characters, type CharacterId } from "../../lib/nightfall/room-protocol";
 import RoomLobby from "./RoomLobby";
@@ -841,8 +841,8 @@ export default function Nightfall() {
                 />
               </div>
               {state.boss.warning && (
-                <p className="boss-warning">
-                  {bosses[state.boss.kind].warning}
+                <p className={`boss-warning${state.boss.ultimate ? " boss-warning-ultimate" : ""}`}>
+                  {(state.boss.ultimate ? bossUltimates : state.boss.followup ? bossCombos : bosses)[state.boss.kind].warning}
                 </p>
               )}
             </section>
