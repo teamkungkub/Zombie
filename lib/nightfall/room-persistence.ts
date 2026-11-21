@@ -15,6 +15,9 @@ interface RoomStorage {
 type RoomDocument = Omit<StoredRoom, "members"> & { members: [string, StoredRoom["members"] extends Map<string, infer M> ? M : never][] };
 
 const noStorage: RoomReply = {
+  status: 503, body: { error: "ระบบห้องออนไลน์ยังไม่ได้ตั้งค่าที่เก็บห้อง", code: "ROOM_STORAGE_NOT_CONFIGURED" },
+};
+const storageUnavailable: RoomReply = {
   status: 503, body: { error: "ระบบห้องกำลังเชื่อมต่อใหม่", code: "ROOM_STORAGE_UNAVAILABLE" },
 };
 
@@ -40,9 +43,9 @@ export function createPersistentRoomHandler(storage: RoomStorage | null) {
         await delay(5 + Math.floor(Math.random() * 16));
       }
     } catch {
-      return noStorage;
+      return storageUnavailable;
     }
-    return noStorage;
+    return storageUnavailable;
   };
 }
 

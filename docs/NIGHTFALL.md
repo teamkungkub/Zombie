@@ -6,7 +6,7 @@ Run `npm install`, then `npm run dev` and open http://localhost:3000. Build with
 
 ## Playing with friends
 
-Choose **เล่นกับเพื่อน**, pick Vanguard, Wraith, or Ember, and create a room. Give the six-digit code to friends on the same game URL. The room holds up to four players. The host starts the run, and anyone can reach the green checkpoint and lead the team into the next zone. Shots can damage teammates, and cover blocks those shots just as it blocks shots at zombies.
+Choose **เล่นกับเพื่อน**, pick Vanguard, Wraith, or Ember, and create a room. Give the six-digit code to friends on the same game URL. The room holds up to four players. The host starts the run, and anyone can reach the green checkpoint and lead the team into the next zone. Everyone sees grenades thrown in their zone and plays the blast from the shared room timer. Shots and grenades can damage teammates within reach. Solid cover blocks both.
 
 The game retries automatically after a network interruption and uses the same room code and session. The host can replay after game over without asking friends to join again. A host who clicks **ออกจากห้อง** closes the room. A room is eligible for cleanup after seven days without activity from any member.
 

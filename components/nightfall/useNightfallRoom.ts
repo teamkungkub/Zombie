@@ -13,6 +13,7 @@ async function sendRoomRequest<T>(
   signal?: AbortSignal,
   keepalive = false,
 ): Promise<T> {
+  const sentAt = performance.now();
   const response = await fetch("/api/nightfall/room", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28,6 +29,10 @@ async function sendRoomRequest<T>(
     );
   }
   if (!result) throw new RoomRequestError("ระบบห้องกำลังเชื่อมต่อใหม่");
+  if (typeof result.serverTime === "number" && typeof result.serverProcessingMs === "number") {
+    const transit = (performance.now() - sentAt - result.serverProcessingMs) / 2;
+    result.serverTime += Math.max(0, Math.min(150, transit));
+  }
   return result as T;
 }
 
@@ -73,7 +78,7 @@ export function useNightfallRoom(
   const consume = useCallback((frame: RoomFrame, identity: RoomSession) => {
     const started = frame.room.status === "playing" &&
       (currentRoom.current?.status !== "playing" || currentRoom.current.round !== frame.room.round);
-    engine.current?.applyRoomFrame(frame.room, identity.playerId, frame.events);
+    engine.current?.applyRoomFrame(frame.room, identity.playerId, frame.events, frame.serverTime);
     currentRoom.current = frame.room;
     cursor.current = frame.events.reduce((last, event) => Math.max(last, event.id), cursor.current);
     setRoom((previous) => sameRoster(previous, frame.room) ? previous : frame.room);

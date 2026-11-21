@@ -36,6 +36,16 @@ export const boostSeconds = 10;
 export const drinkingSeconds = 1.8;
 export const drinkOpeningSeconds = 0.42;
 export const throwChargeSeconds = 1;
+export const grenadeFlight = { seconds: 1.6, steps: 24, radius: 4 } as const;
+
+export function grenadePlayerDamage(distance: number) {
+  if (distance > grenadeFlight.radius) return 0;
+  return Math.round(65 - 45 * distance / grenadeFlight.radius);
+}
+
+export function grenadeLaunch(charge: number, pitch: number) {
+  return { speed: 4.4 + charge * 5.8, lift: 2.5 + charge * 1.7 + pitch * 2.4 };
+}
 export const knifeTuning = {
   staminaCost: 9,
   hitSeconds: 0.17,

@@ -63,6 +63,52 @@ test("friendly fire is bounded, relayed once, and acknowledged by event cursor",
   assert.deepEqual(sync(host).events, []);
 });
 
+test("grenade launch shares a single fuse, with host-confirmed splash damage delivered once", () => {
+  const { send, create, join, sync, advance } = setup();
+  const host = create();
+  const thrower = join(host.code);
+  const nearby = join(host.code);
+  const distant = join(host.code);
+  send({ action: "start", session: host });
+  sync(host, { pose: { ...hostPose, wave: 1 } });
+  sync(nearby, { pose: { ...guestPose, z: 13, wave: 1 } });
+  sync(distant, { pose: { ...guestPose, z: 24, wave: 1 } });
+  const pose = { ...guestPose, wave: 1 };
+  const launch = { id: 2, type: "throw-grenade", release: { ...pose, charge: 0.5 } };
+  const { events } = sync(thrower, { pose, commands: [{ ...launch, id: 1, release: { ...launch.release, wave: 2 } }, launch] });
+  assert.equal(events.length, 1);
+  const [event] = events;
+  assert.equal(event.type, "grenade-thrown");
+  assert.equal(event.grenade.detonatesAt, 1600);
+  assert.equal(event.grenade.source, thrower.playerId);
+  for (const member of [host, nearby, distant]) {
+    const [received] = sync(member).events;
+    assert.equal(received.type, "grenade-thrown");
+    assert.deepEqual(received.grenade, event.grenade);
+  }
+  sync(thrower, { commands: [launch] });
+  assert.deepEqual(sync(thrower, { since: event.id }).events, []);
+
+  const burst = { id: 1, type: "grenade-blast", grenadeId: event.grenade.id, x: 2, y: 0.25, z: 13,
+    targets: [nearby.playerId, nearby.playerId, thrower.playerId, distant.playerId] };
+  sync(host, { commands: [burst] });
+  const [warning] = sync(nearby).events;
+  assert.deepEqual(sync(nearby, { since: warning.id }).events, []);
+  advance(1600);
+  sync(thrower, { commands: [{ ...burst, id: 3 }] });
+  assert.deepEqual(sync(nearby, { since: warning.id }).events, []);
+  sync(host, { commands: [{ ...burst, id: 2 }] });
+  const [hit] = sync(nearby, { since: warning.id }).events;
+  assert.equal(hit.type, "damage");
+  assert.equal(hit.amount, 59);
+  assert.equal(hit.cause, "grenade");
+  assert.equal(hit.source, thrower.playerId);
+  assert.deepEqual(sync(thrower, { since: event.id }).events, []);
+  assert.equal(sync(distant).events.some(({ type }) => type === "damage"), false);
+  sync(host, { commands: [{ ...burst, id: 3 }] });
+  assert.deepEqual(sync(nearby, { since: hit.id }).events, []);
+});
+
 test("only a host owns world snapshots and enemy damage while guests can report zombie hits", () => {
   const { send, create, join, sync } = setup();
   const host = create();
@@ -174,7 +220,7 @@ test("a second room handler can recover persisted credentials and preserve concu
   const unavailable = await createPersistentRoomHandler(null)(sync);
   assert.equal(unavailable.status, 503);
   assert.ok("code" in unavailable.body);
-  assert.equal(unavailable.body.code, "ROOM_STORAGE_UNAVAILABLE");
+  assert.equal(unavailable.body.code, "ROOM_STORAGE_NOT_CONFIGURED");
 });
 
 test("Supabase room storage keeps credentials server-side and retries a concurrent write", async (t) => {

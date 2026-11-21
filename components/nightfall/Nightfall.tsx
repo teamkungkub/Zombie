@@ -9,7 +9,7 @@ import type {
 } from "../../lib/nightfall/engine";
 import "./nightfall.css";
 import { bossCombos, bosses, bossUltimates, zoneForStage } from "../../lib/nightfall/rules";
-import { weapons, weaponSlots } from "../../lib/nightfall/weapons";
+import { hasScope, weapons, weaponSlots } from "../../lib/nightfall/weapons";
 import { characters, type CharacterId } from "../../lib/nightfall/room-protocol";
 import RoomLobby from "./RoomLobby";
 import { useNightfallRoom } from "./useNightfallRoom";
@@ -49,6 +49,7 @@ const INITIAL: Snapshot = {
   healProgress: null,
   drinkProgress: null,
   throwProgress: null,
+  throwDistance: null,
   boost: 0,
   timedOut: false,
   gateOpen: false,
@@ -742,7 +743,7 @@ export default function Nightfall() {
           </div>
           {status === "playing" &&
             state.aiming &&
-            state.weaponId === "marksman" && (
+            hasScope(state.weaponId) && (
               <div className="optic-lens" aria-hidden="true">
                 <i className="optic-horizontal" />
                 <i className="optic-vertical" />
@@ -776,7 +777,9 @@ export default function Nightfall() {
                       drinkOpeningSeconds
                       ? "กำลังเปิดกระป๋อง"
                       : "กำลังดื่ม"
-                    : "เตรียมโยน · ปล่อยเพื่อขว้าง"}
+                    : state.throwDistance === null
+                      ? "เตรียมโยน · ปล่อยเพื่อขว้าง"
+                      : `จุดระเบิดราว ${state.throwDistance.toFixed(1)} ม. · ปล่อยเพื่อขว้าง`}
               </span>
               <progress
                 aria-label={
@@ -1356,7 +1359,7 @@ export default function Nightfall() {
                     ["คลิกซ้าย", "ยิงหรือใช้ของที่ถือ"],
                     ["คลิกขวา", "เล็งผ่านศูนย์ปืน"],
                     ["R", "รีโหลด · ลูกซองเติมทีละนัด"],
-                    ["1–5", "สลับปืนที่เก็บแล้ว"],
+                    ["1–7", "สลับปืนที่เก็บแล้ว"],
                     ["SHIFT", "แตะเพื่อเร่งสั้น ๆ หรือกดค้างเพื่อวิ่ง"],
                     ["ALT + WASD", "พุ่งตามทิศที่กดเดิน · ใช้พละกำลัง 14 หน่วย"],
                     ["V", `ฟันด้วยคาตานะทันที · ใช้พละกำลัง ${knifeTuning.staminaCost} หน่วย`],

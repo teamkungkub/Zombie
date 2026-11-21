@@ -12,8 +12,8 @@ return {
         ["wraith"] = {
             ["name"] = "WRAITH",
             ["role"] = "หน่วยลาดตระเวน",
-            ["color"] = "#75b4ba",
-            ["description"] = "ฮู้ดสีฟ้าหม่นกับหน้ากากลาดตระเวน",
+            ["color"] = "#c5c9d7",
+            ["description"] = "ผมขาวซ้อนเป็นช่อ แว่นกรอบดำ และแจ็กเก็ตสีถ่าน",
         },
         ["ember"] = {
             ["name"] = "EMBER",
@@ -36,7 +36,7 @@ return {
             ["recoveryDelay"] = 0.42,
         },
     },
-    ["weaponSlots"] = { "rifle", "sidearm", "shotgun", "lmg", "marksman" },
+    ["weaponSlots"] = { "rifle", "sidearm", "shotgun", "lmg", "marksman", "arc", "titan" },
     ["weapons"] = {
         ["rifle"] = {
             ["name"] = "M4A1",
@@ -161,6 +161,56 @@ return {
                 ["portZ"] = -0.21,
                 ["caseRadius"] = 0.014,
                 ["caseLength"] = 0.061,
+            },
+        },
+        ["arc"] = {
+            ["name"] = "อาร์ก-9",
+            ["caliber"] = ".45 ARC",
+            ["capacity"] = 20,
+            ["pack"] = 10,
+            ["delay"] = 0.095,
+            ["reload"] = 2.55,
+            ["damage"] = 61,
+            ["head"] = 137,
+            ["pellets"] = 1,
+            ["spread"] = 0.012,
+            ["range"] = 95,
+            ["kick"] = 0.028,
+            ["auto"] = true,
+            ["muzzle"] = -1.16,
+            ["sight"] = 50,
+            ["fireFx"] = {
+                ["recovery"] = 17,
+                ["flash"] = 0.056,
+                ["muzzleY"] = 0.035,
+                ["portZ"] = -0.21,
+                ["caseRadius"] = 0.013,
+                ["caseLength"] = 0.056,
+            },
+        },
+        ["titan"] = {
+            ["name"] = "ไททัน",
+            ["caliber"] = "13 MM TITAN",
+            ["capacity"] = 5,
+            ["pack"] = 5,
+            ["delay"] = 0.73,
+            ["reload"] = 2.8,
+            ["damage"] = 149,
+            ["head"] = 275,
+            ["pellets"] = 1,
+            ["spread"] = 0.0015,
+            ["range"] = 130,
+            ["kick"] = 0.052,
+            ["auto"] = false,
+            ["muzzle"] = -1.33,
+            ["sight"] = 35,
+            ["fireFx"] = {
+                ["recovery"] = 14,
+                ["flash"] = 0.075,
+                ["muzzleY"] = 0.035,
+                ["portZ"] = -0.22,
+                ["caseRadius"] = 0.017,
+                ["caseLength"] = 0.074,
             },
         },
     },
@@ -503,6 +553,20 @@ return {
         ["mortar"] = { "lmg", "marksman", "shotgun" },
         ["spores"] = { "marksman", "lmg", "shotgun" },
     },
+    ["rareBossDrops"] = {
+        ["arc"] = {
+            ["minStage"] = 6,
+            ["baseChance"] = 0.12,
+            ["chancePerStage"] = 0.034,
+            ["maxChance"] = 0.8,
+        },
+        ["titan"] = {
+            ["minStage"] = 13,
+            ["baseChance"] = 0.16,
+            ["chancePerStage"] = 0.024,
+            ["maxChance"] = 0.72,
+        },
+    },
     ["zones"] = {
         {
             ["name"] = "ลานกักกัน",
@@ -570,6 +634,8 @@ return {
             ["shotgun"] = 1,
             ["lmg"] = 4,
             ["marksman"] = 1,
+            ["arc"] = 1,
+            ["titan"] = 1,
         },
     },
     ["equipment"] = {
@@ -605,6 +671,11 @@ return {
         ["drinkingSeconds"] = 1.8,
         ["drinkOpeningSeconds"] = 0.42,
         ["throwChargeSeconds"] = 1,
+        ["grenadeFlight"] = {
+            ["seconds"] = 1.6,
+            ["steps"] = 24,
+            ["radius"] = 4,
+        },
     },
     ["referenceStages"] = {
         ["recruit"] = {

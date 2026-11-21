@@ -2148,6 +2148,9 @@
   transform: translateX(-50%);
   z-index: 4;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
   gap: 4px;
   max-width: calc(100% - 24px);
 }

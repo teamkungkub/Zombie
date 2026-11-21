@@ -10,6 +10,7 @@ import {
   drinkOpeningSeconds,
   equipmentLimits,
   equipmentDropTuning,
+  grenadeFlight,
   equipmentOrder,
   healAmount,
   healingSeconds,
@@ -38,6 +39,7 @@ import {
 import {
   ammoDropChance,
   bossWeaponPools,
+  rareBossDrops,
   dropRounds,
   shotgunShellSeconds,
   surfaceImpactTuning,
@@ -75,6 +77,7 @@ const config = {
   bossUltimateMortarSpread,
   bossUltimates,
   bossWeaponPools,
+  rareBossDrops,
   zones: zones.map((zone, i) => ({
     ...zone,
     checkpoint: nextCheckpoint(i + 1),
@@ -93,6 +96,7 @@ const config = {
     drinkingSeconds,
     drinkOpeningSeconds,
     throwChargeSeconds,
+    grenadeFlight,
   },
   referenceStages: {
     recruit: Array.from({ length: 12 }, (_, i) => stagePlan(i + 1, "recruit")),

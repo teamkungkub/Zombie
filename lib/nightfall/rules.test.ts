@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dodgeDistanceAt, dodgeTuning, movementInWorld } from "./movement.ts";
-import { healingSeconds, injectionPose, injectionTiming, nextHeldItem, rollEquipmentDrop, throwCharge } from "./equipment.ts";
+import { grenadeLaunch, healingSeconds, injectionPose, injectionTiming, nextHeldItem, rollEquipmentDrop, throwCharge } from "./equipment.ts";
 import { advanceZombieGait, blendZombieMotion, steerZombieVelocity, turnZombieToward, zombieCrawl, zombieCrawlThreshold, zombieCrawlTransition, zombieFallMotion, zombieGaits, zombieGaitPose, zombieImpactDirection, zombieImpactMotion, zombieLocalImpact } from "./zombie-motion.ts";
 import { hunterPounceHits, hunterPounceMotion, zombieMelee } from "./zombie-attack.ts";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion.ts";
@@ -329,9 +329,32 @@ test("equipment drops recover from dry streaks and bosses have distinct weapon p
   assert.equal(rollEquipmentDrop(0, () => 0.99), null);
   assert.equal(rollEquipmentDrop(2, () => 0.99), "energy");
   assert.equal(rollEquipmentDrop(0, () => 0), "medkit");
-  assert.equal(rollBossWeapon("slam", () => 0), "sidearm");
-  assert.equal(rollBossWeapon("slam", () => 0.99), "shotgun");
-  assert.equal(rollBossWeapon("spores", () => 0), "marksman");
+  assert.equal(rollBossWeapon("slam", 1, () => 0), "sidearm");
+  assert.equal(rollBossWeapon("slam", 1, () => 0.99), "shotgun");
+  assert.equal(rollBossWeapon("spores", 5, () => 0), "marksman");
+});
+
+test("later bosses unlock stronger rare drops with individual reserve caps", () => {
+  assert.equal(rollBossWeapon("slam", 6, () => 0), "arc");
+  assert.equal(rollBossWeapon("slam", 12, () => 0), "arc");
+  assert.equal(rollBossWeapon("slam", 13, () => 0), "titan");
+  assert.equal(rollBossWeapon("slam", 13, () => 0.5), "shotgun");
+  assert.equal(rollBossWeapon("slam", 35, () => 0.5), "titan");
+  const arsenal: Arsenal = { rifle: { ammo: 1, reserve: 8 } };
+  collectWeapon(arsenal, "arc");
+  collectWeapon(arsenal, "titan");
+  assert.notEqual(weapons.arc.caliber, weapons.titan.caliber);
+  assert.equal(collectAmmoDrop(arsenal, { weaponId: "titan", rounds: 1 }), true);
+  assert.equal(arsenal.arc?.reserve, 10);
+  assert.equal(arsenal.titan?.reserve, 6);
+  collectWeapon(arsenal, "titan");
+  assert.equal(arsenal.titan?.reserve, 10);
+  assert.equal(collectAmmoDrop(arsenal, { weaponId: "titan", rounds: 1 }), false);
+});
+
+test("a longer hold increases the game's grenade launch strength up to the charge limit", () => {
+  assert.ok(grenadeLaunch(throwCharge(0.8), 0).speed > grenadeLaunch(throwCharge(0.2), 0).speed);
+  assert.deepEqual(grenadeLaunch(throwCharge(4), 0), grenadeLaunch(throwCharge(1), 0));
 });
 
 test("zombie drops are infrequent, small, and go only to the matching reserve", () => {

@@ -14,12 +14,15 @@ import { WeaponHands } from "./weapon-hands";
 import { magazineReloadPose, shellReloadPose } from "./reload-motion";
 import { RoomAvatars } from "./room-avatars";
 import { RenderBudget, renderPixelLimit } from "./render-quality";
-import { characters, type BossReward, type CharacterId, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomView, type RoomWorld, type RoomZombie, type ZombieGunImpact, type ZombieHitZone } from "./room-protocol";
+import { characters, type BossReward, type CharacterId, type GrenadeRelease, type RoomCommand, type RoomCommandPayload, type RoomEvent, type RoomGrenade, type RoomView, type RoomWorld, type RoomZombie, type ZombieGunImpact, type ZombieHitZone } from "./room-protocol";
 import {
   boostSeconds,
   drinkingSeconds,
   drinkOpeningSeconds,
   equipmentLimits,
+  grenadeFlight,
+  grenadeLaunch,
+  grenadePlayerDamage,
   healAmount,
   healingSeconds,
   injectionTiming,
@@ -35,6 +38,8 @@ import {
   loadShotgunShell,
   shotgunShellSeconds,
   collectAmmoDrop,
+  hasScope,
+  isRareWeapon,
   rollAmmoDrop,
   rollBossWeapon,
   weapons,
@@ -122,6 +127,7 @@ export type Snapshot = {
   healProgress: number | null;
   drinkProgress: number | null;
   throwProgress: number | null;
+  throwDistance: number | null;
   boost: number;
   timedOut: boolean;
   gateOpen: boolean;
@@ -133,6 +139,7 @@ type Pickup =
   | { kind: LootKind; mesh: THREE.Group }
   | { kind: "ammo"; mesh: THREE.Group; drop: AmmoDrop }
   | { kind: "weapon"; mesh: THREE.Group; weaponId: BossReward["weaponId"] };
+type GrenadePath = { points: THREE.Vector3[]; bounces: Set<number> };
 const loot = {
   grenade: {
     color: "#e8aa65",
@@ -243,6 +250,7 @@ const initial: Snapshot = {
   healProgress: null,
   drinkProgress: null,
   throwProgress: null,
+  throwDistance: null,
   boost: 0,
   timedOut: false,
   gateOpen: false,
@@ -331,9 +339,24 @@ export class NightfallEngine {
   private throwFollowThroughUntil = 0;
   private thrownGrenades: {
     model: THREE.Group;
-    velocity: THREE.Vector3;
-    burstAt: number;
+    path: GrenadePath;
+    startedAt: number;
+    reportedStep: number;
+    room?: { grenade: RoomGrenade; blastAt: number };
   }[] = [];
+  private lastRoomGrenadeId = 0;
+  private grenadeGuide = new THREE.Group();
+  private grenadeArc = new THREE.Line(
+    new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array((grenadeFlight.steps + 1) * 3), 3)),
+    new THREE.LineBasicMaterial({ color: "#ffe28d", transparent: true, opacity: 0.8, depthWrite: false }),
+  );
+  private grenadeBlastGuide = new THREE.Mesh(
+    new THREE.RingGeometry(0.97, 1, 48),
+    new THREE.MeshBasicMaterial({ color: "#ffbb57", transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  private grenadePreviewAt = -Infinity;
+  private grenadePreviewInputs = "";
+  private grenadeRaycaster = new THREE.Raycaster();
   private sprintPose = 0;
   private spitBolts: {
     mesh: THREE.Mesh;
@@ -455,6 +478,11 @@ export class NightfallEngine {
     this.contactShadows = this.createContactShadows();
     this.scene.add(this.contactShadows);
     this.scene.add(this.camera);
+    this.grenadeGuide.add(this.grenadeArc, this.grenadeBlastGuide);
+    this.grenadeArc.frustumCulled = false;
+    this.grenadeBlastGuide.rotation.x = -Math.PI / 2;
+    this.grenadeGuide.visible = false;
+    this.scene.add(this.grenadeGuide);
     this.scene.add(new THREE.HemisphereLight("#cad5cf", "#34372c", 2.2));
     this.camera.rotation.order = "YXZ";
     this.createWorld();
@@ -1561,8 +1589,8 @@ export class NightfallEngine {
     const model = new THREE.Group();
     const compact = id === "sidearm";
     const wood = id === "shotgun";
-    const heavy = id === "lmg";
-    const accent = wood
+    const heavy = id === "lmg" || id === "arc";
+    const accent = id === "titan" ? "#756a89" : id === "arc" ? "#637d8f" : wood
       ? "#93613e"
       : heavy
         ? "#6c795c"
@@ -1687,7 +1715,7 @@ export class NightfallEngine {
         model,
       ).rotation.x = Math.PI / 2;
     }
-    if (id === "marksman") {
+    if (hasScope(id)) {
       this.cylinder(0.043, 0.23, "#303c3e", 0, 0.151, -0.24, model).rotation.x =
         Math.PI / 2;
       this.cylinder(
@@ -1881,7 +1909,7 @@ export class NightfallEngine {
   }
 
   setCharacter(id: CharacterId) {
-    this.weaponHands.setSleeve(characters[id].color);
+    this.weaponHands.setSleeve(id === "wraith" ? "#3d404a" : characters[id].color);
   }
 
   roomUpdate() {
@@ -1918,7 +1946,7 @@ export class NightfallEngine {
     this.menu();
   }
 
-  applyRoomFrame(room: RoomView, playerId: string, events: RoomEvent[]) {
+  applyRoomFrame(room: RoomView, playerId: string, events: RoomEvent[], serverTime = Date.now()) {
     if (room.status === "lobby") return;
     const member = room.players.find((player) => player.id === playerId);
     if (!member) return;
@@ -1926,6 +1954,7 @@ export class NightfallEngine {
     if (room.status === "playing" && (!this.room || this.room.round !== room.round)) {
       this.room = { code: room.code, id: playerId, host: room.hostId === playerId, slot: member.slot, round: room.round };
       this.roomCommands = [];
+      this.lastRoomGrenadeId = 0;
       this.roomAvatars.clear();
       this.setCharacter(member.character);
       this.start();
@@ -1934,10 +1963,15 @@ export class NightfallEngine {
     if (!this.room.host && room.world) this.applyRoomWorld(room.world);
     this.roomAvatars.sync(room.players.filter((player) => !player.pose?.wave || player.pose.wave === this.state.wave), playerId);
     for (const event of events) {
-      if (this.state.status === "dead") break;
+      if (event.type === "grenade-thrown") {
+        this.receiveGrenade(event.grenade, serverTime);
+        continue;
+      }
+      if (this.state.status === "dead") continue;
       if (event.type === "damage") {
         this.hurtPlayer(event.amount);
-        if (event.source) this.state.message = "โดนยิงโดยผู้เล่นในห้อง";
+        if (event.cause === "grenade") this.state.message = "โดนระเบิดของเพื่อนในห้อง";
+        else if (event.source) this.state.message = "โดนยิงโดยผู้เล่นในห้อง";
       } else if (this.room.host) {
         const zombie = this.zombies.find((candidate) => candidate.networkId === event.target);
         if (!zombie || zombie.health <= 0) continue;
@@ -2052,11 +2086,12 @@ export class NightfallEngine {
   }
 
   private queueRoomCommand(command: RoomCommandPayload) {
-    if (this.roomCommands.length < 64)
-      this.roomCommands.push({ ...command, id: ++this.roomCommandId });
+    if (this.roomCommands.length >= 64) return false;
+    this.roomCommands.push({ ...command, id: ++this.roomCommandId });
+    return true;
   }
 
-  private playerDamageZombie(zombie: Zombie, damage: number, headshot: boolean, origin: THREE.Vector3, weapon: WeaponId | "knife" | "grenade", impact?: ZombieGunImpact) {
+  private playerDamageZombie(zombie: Zombie, damage: number, headshot: boolean, origin: THREE.Vector3, weapon: WeaponId | "knife", impact?: ZombieGunImpact) {
     if (this.room && !this.room.host) {
       this.queueRoomCommand({ type: "hit-zombie", target: zombie.networkId, weapon, amount: damage, impact });
     } else {
@@ -2251,7 +2286,7 @@ export class NightfallEngine {
 
   cancelUse() {
     this.grenadeHeldAt = this.healStartedAt = null;
-    this.state.throwProgress = this.state.healProgress = null;
+    this.state.throwProgress = this.state.throwDistance = this.state.healProgress = null;
     this.drinkStartedAt = this.state.drinkProgress = null;
     this.throwFollowThroughUntil = 0;
     this.knifeSwing = null;
@@ -2292,8 +2327,9 @@ export class NightfallEngine {
         this.state.throwProgress = 0;
         this.sound("gear");
       } else if (!value && this.grenadeHeldAt !== null) {
-        this.throwGrenade(throwCharge(this.elapsed - this.grenadeHeldAt));
-        this.grenadeHeldAt = this.state.throwProgress = null;
+        const charge = throwCharge(this.elapsed - this.grenadeHeldAt);
+        this.grenadeHeldAt = this.state.throwProgress = this.state.throwDistance = null;
+        this.throwGrenade(charge);
       }
     } else if (
       value &&
@@ -2629,7 +2665,8 @@ export class NightfallEngine {
 
   private makeWeaponCrate(id: BossReward["weaponId"], reward: boolean) {
     const group = new THREE.Group();
-    const gear = new THREE.MeshBasicMaterial({ color: reward ? "#ffc268" : "#9eafd0" });
+    const rare = isRareWeapon(id);
+    const gear = new THREE.MeshBasicMaterial({ color: rare ? id === "titan" ? "#ffb85e" : "#c998ff" : reward ? "#ffc268" : "#9eafd0" });
     const crate = new THREE.Mesh(
       new THREE.BoxGeometry(0.94, 0.27, 0.53),
       new THREE.MeshBasicMaterial({ color: "#38495b" }),
@@ -2643,7 +2680,7 @@ export class NightfallEngine {
     group.add(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.08), gear));
     group.children[2].position.y = 0.31;
     const label = this.label(
-      reward ? `BOSS DROP / ${weapons[id].caliber}` : weapons[id].caliber,
+      rare ? `RARE / ${weapons[id].caliber}` : reward ? `BOSS DROP / ${weapons[id].caliber}` : weapons[id].caliber,
       "#e1ebff",
       "#223346",
       reward ? 2.1 : 1.18,
@@ -2765,7 +2802,7 @@ export class NightfallEngine {
       const { x, z } = zombie.group.position;
       const spot = [[x + 2.6, z], [x - 2.6, z], [x, z + 2.6], [x, z - 2.6]]
         .find(([px, pz]) => canOccupy(px, pz, this.obstacles) && clearSegment(x, z, px, pz, this.obstacles));
-      this.placeBossReward({ x: spot?.[0] ?? x, z: spot?.[1] ?? z, weaponId: rollBossWeapon(defeatedBoss) });
+      this.placeBossReward({ x: spot?.[0] ?? x, z: spot?.[1] ?? z, weaponId: rollBossWeapon(defeatedBoss, this.state.wave) });
     }
     const phase = nextStagePhase(this.state.remaining, !!defeatedBoss);
     if (phase === "combat") return;
@@ -3123,86 +3160,171 @@ export class NightfallEngine {
   }
 
   private throwGrenade(charge: number) {
+    const release = this.grenadeRelease(charge);
+    if (this.room) {
+      if (!this.queueRoomCommand({ type: "throw-grenade", release })) return;
+    } else this.spawnThrownGrenade(release);
     this.state.grenades--;
     this.throwFollowThroughUntil = this.elapsed + 0.34;
-    const model = this.equipmentModel("grenade");
-    model.position.copy(this.camera.position);
-    model.position.y -= 0.25;
-    this.world.add(model);
-    const speed = 4.4 + charge * 5.8;
-    const velocity = new THREE.Vector3(
-      -Math.sin(this.yaw) * speed,
-      2.5 + charge * 1.7 + this.pitch * 2.4,
-      -Math.cos(this.yaw) * speed,
-    );
-    this.thrownGrenades.push({ model, velocity, burstAt: this.elapsed + 1.6 });
     this.state.message = "โยนระเบิดแล้ว";
     this.sound("gear");
     this.publish();
   }
 
-  private updateGrenades(dt: number) {
-    for (let i = this.thrownGrenades.length - 1; i >= 0; i--) {
-      const { model, velocity, burstAt } = this.thrownGrenades[i];
-      if (this.elapsed >= burstAt) {
-        const landing = model.position.clone();
-        landing.y = Math.max(0.25, landing.y);
-        this.removeMarker(model);
-        this.thrownGrenades.splice(i, 1);
-        this.burstGrenade(landing);
-        continue;
-      }
+  private grenadeRelease(charge: number): GrenadeRelease {
+    const { x, y, z } = this.camera.position;
+    return { x, y, z, yaw: this.yaw % (Math.PI * 2), pitch: this.pitch, charge, wave: this.state.wave };
+  }
+
+  private receiveGrenade(grenade: RoomGrenade, serverTime: number) {
+    if (grenade.id <= this.lastRoomGrenadeId || grenade.wave !== this.state.wave || serverTime - grenade.detonatesAt > 500) return;
+    this.lastRoomGrenadeId = grenade.id;
+    this.spawnThrownGrenade(grenade, { grenade, blastAt: performance.now() + grenade.detonatesAt - serverTime });
+  }
+
+  private spawnThrownGrenade(release: GrenadeRelease, room?: { grenade: RoomGrenade; blastAt: number }) {
+    const path = this.planGrenadeFlight(release);
+    const model = this.equipmentModel("grenade");
+    model.position.copy(path.points[0]);
+    this.world.add(model);
+    this.thrownGrenades.push({ model, path, startedAt: this.elapsed, reportedStep: 0, room });
+  }
+
+  private planGrenadeFlight(release: GrenadeRelease): GrenadePath {
+    const { x, y, z, charge, pitch, yaw } = release;
+    const position = new THREE.Vector3(x, y - 0.25, z);
+    const { speed, lift } = grenadeLaunch(charge, pitch);
+    const velocity = new THREE.Vector3(-Math.sin(yaw) * speed, lift, -Math.cos(yaw) * speed);
+    const dt = grenadeFlight.seconds / grenadeFlight.steps;
+    const points = [position.clone()];
+    const bounces = new Set<number>();
+    const direction = new THREE.Vector3();
+    const normalMatrix = new THREE.Matrix3();
+    for (let step = 1; step <= grenadeFlight.steps; step++) {
       velocity.y -= 10 * dt;
-      const travel = velocity.clone().multiplyScalar(dt);
-      const distance = travel.length();
+      const distance = velocity.length() * dt;
       if (distance > 0) {
-        this.raycaster.set(model.position, travel.clone().normalize());
-        const hit = this.raycaster.intersectObjects(this.solidMeshes, true)[0];
-        if (hit?.face && hit.distance <= distance + 0.08) {
-          const normal = hit.face.normal
-            .clone()
-            .applyNormalMatrix(
-              new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld),
-            );
+        this.grenadeRaycaster.set(position, direction.copy(velocity).normalize());
+        this.grenadeRaycaster.far = distance;
+        const hit = this.grenadeRaycaster.intersectObjects(this.solidMeshes, true)[0];
+        if (hit?.face && hit.distance <= distance) {
+          const normal = hit.face.normal.clone().applyNormalMatrix(normalMatrix.getNormalMatrix(hit.object.matrixWorld));
           if (normal.dot(velocity) > 0) normal.negate();
-          model.position.copy(hit.point).addScaledVector(normal, 0.09);
+          position.copy(hit.point).addScaledVector(normal, 0.09);
           velocity.reflect(normal).multiplyScalar(0.48);
-          this.sound("bounce");
-        } else model.position.add(travel);
+          bounces.add(step);
+        } else position.addScaledVector(velocity, dt);
       }
-      if (model.position.y < 0.12) {
-        model.position.y = 0.12;
-        if (velocity.y < -1.8) this.sound("bounce");
+      if (position.y < 0.12) {
+        position.y = 0.12;
+        if (velocity.y < -1.8) bounces.add(step);
         velocity.y = velocity.y < -0.7 ? -velocity.y * 0.36 : 0;
         velocity.x *= Math.exp(-dt * 13);
         velocity.z *= Math.exp(-dt * 13);
       }
       for (const axis of ["x", "z"] as const) {
-        if (Math.abs(model.position[axis]) <= 26) continue;
-        model.position[axis] = THREE.MathUtils.clamp(
-          model.position[axis],
-          -26,
-          26,
-        );
+        if (Math.abs(position[axis]) <= 26) continue;
+        position[axis] = THREE.MathUtils.clamp(position[axis], -26, 26);
         velocity[axis] *= -0.42;
+        bounces.add(step);
       }
-      model.rotation.x += velocity.length() * dt * 1.6;
-      model.rotation.z += velocity.x * dt;
+      points.push(position.clone());
+    }
+    return { points, bounces };
+  }
+
+  private updateGrenadeGuide(playing: boolean) {
+    if (!playing || this.grenadeHeldAt === null) {
+      this.grenadeGuide.visible = false;
+      this.grenadePreviewInputs = "";
+      this.grenadePreviewAt = -Infinity;
+      return;
+    }
+    if (this.elapsed - this.grenadePreviewAt < 0.12) return;
+    this.grenadePreviewAt = this.elapsed;
+    const charge = throwCharge(this.elapsed - this.grenadeHeldAt);
+    const { x, y, z } = this.camera.position;
+    const inputs = `${x},${y},${z},${this.yaw},${this.pitch},${charge}`;
+    if (inputs === this.grenadePreviewInputs) return;
+    this.grenadePreviewInputs = inputs;
+    const { points } = this.planGrenadeFlight(this.grenadeRelease(charge));
+    const attribute = this.grenadeArc.geometry.getAttribute("position");
+    for (const [i, point] of points.entries()) attribute.setXYZ(i, point.x, point.y, point.z);
+    attribute.needsUpdate = true;
+    const last = points[grenadeFlight.steps];
+    const height = Math.max(0.25, last.y);
+    const radius = Math.sqrt(Math.max(0, grenadeFlight.radius ** 2 - height ** 2));
+    this.grenadeBlastGuide.position.set(last.x, 0.13, last.z);
+    this.grenadeBlastGuide.scale.setScalar(radius);
+    this.state.throwDistance = Math.hypot(last.x - x, last.z - z);
+    this.grenadeGuide.visible = true;
+  }
+
+  private updateGrenades(dt: number, now = performance.now()) {
+    for (let i = this.thrownGrenades.length - 1; i >= 0; i--) {
+      const grenade = this.thrownGrenades[i];
+      const { model, path, startedAt, room } = grenade;
+      const progress = room ? 1 + (now - room.blastAt) / (grenadeFlight.seconds * 1000) :
+        (this.elapsed - startedAt) / grenadeFlight.seconds;
+      if (progress >= 1) {
+        const landing = path.points[grenadeFlight.steps].clone();
+        landing.y = Math.max(0.25, landing.y);
+        this.removeMarker(model);
+        this.thrownGrenades.splice(i, 1);
+        this.burstGrenade(landing, room?.grenade);
+        continue;
+      }
+      const frame = Math.max(0, progress * grenadeFlight.steps);
+      const step = Math.floor(frame);
+      const point = path.points[step];
+      const next = path.points[step + 1];
+      model.position.copy(point).lerp(next, frame - step);
+      while (grenade.reportedStep < step) {
+        if (path.bounces.has(++grenade.reportedStep)) this.sound("bounce");
+      }
+      const spinStep = dt * grenadeFlight.steps / grenadeFlight.seconds;
+      model.rotation.x += point.distanceTo(next) * spinStep * 1.6;
+      model.rotation.z += (next.x - point.x) * spinStep;
     }
   }
 
-  private burstGrenade(landing: THREE.Vector3) {
+  private blastHasCover(landing: THREE.Vector3, target: THREE.Vector3) {
+    const toward = target.clone().sub(landing);
+    const distance = toward.length();
+    if (distance < 0.001) return false;
+    this.raycaster.set(landing, toward.normalize());
+    const cover = this.raycaster.intersectObjects(this.solidMeshes, true)[0];
+    return !!cover && cover.distance < distance;
+  }
+
+  private burstGrenade(landing: THREE.Vector3, grenade?: RoomGrenade) {
     this.impact(landing, "#ffbe75", 0.9);
-    this.sound("blast", landing.distanceTo(this.camera.position));
-    this.state.message = "ระเบิดทำงาน";
+    this.playSpatialCue("blast", landing, landing.distanceTo(this.camera.position));
+    if (this.state.status !== "dead") this.state.message = "ระเบิดทำงาน";
+    if (this.room && (!this.room.host || !grenade || this.state.status === "dead")) return;
+    if (grenade && this.room) {
+      const targets: string[] = [];
+      let hostDamage = 0;
+      for (const { id, eye } of this.combatPlayers()) {
+        if ((id ?? this.room.id) === grenade.source) continue;
+        const torso = eye.clone().add(new THREE.Vector3(0, -0.9, 0));
+        const damage = grenadePlayerDamage(torso.distanceTo(landing));
+        if (!damage || this.blastHasCover(landing, torso)) continue;
+        if (id) targets.push(id);
+        else hostDamage = damage;
+      }
+      this.queueRoomCommand({ type: "grenade-blast", grenadeId: grenade.id,
+        x: landing.x, y: landing.y, z: landing.z, targets });
+      if (hostDamage > 0) {
+        this.hurtPlayer(hostDamage);
+        this.state.message = "โดนระเบิดของเพื่อนในห้อง";
+      }
+    }
     for (const zombie of this.zombies.slice()) {
-      if (zombie.health <= 0 || zombie.group.position.distanceTo(landing) > 4)
+      if (zombie.health <= 0 || zombie.group.position.distanceTo(landing) > grenadeFlight.radius)
         continue;
-      const toward = zombie.group.position.clone().setY(landing.y).sub(landing);
-      this.raycaster.set(landing, toward.clone().normalize());
-      const cover = this.raycaster.intersectObjects(this.solidMeshes, true)[0];
-      if (cover && cover.distance < toward.length()) continue;
-      this.playerDamageZombie(zombie, 210, false, landing, "grenade");
+      if (this.blastHasCover(landing, zombie.group.position.clone().setY(landing.y))) continue;
+      this.hitZombie(zombie, 210, false, landing);
       if (zombie.health <= 0) this.defeat(zombie);
     }
     this.publish();
@@ -3777,6 +3899,8 @@ export class NightfallEngine {
         shotgun: [3050, 83, 0.19],
         lmg: [3800, 107, 0.105],
         marksman: [4500, 94, 0.17],
+        arc: [4200, 100, 0.145],
+        titan: [3900, 72, 0.235],
       };
       const [crack, bass, tail] = profiles[this.state.weaponId];
       texture(crack, 0.32, 0.045);
@@ -4028,7 +4152,7 @@ export class NightfallEngine {
       this.publish();
     }
     this.updateKnife();
-    this.updateGrenades(dt);
+    if (!this.room) this.updateGrenades(dt);
     this.updateSpit(dt);
     if (this.state.status !== "playing") return;
     this.updateObjectives(dt);
@@ -4661,6 +4785,7 @@ export class NightfallEngine {
         if (this.state.status !== "dead") this.updateObjectives(dt);
       }
     }
+    if (this.room && this.thrownGrenades.length) this.updateGrenades(dt, now);
     const preview = this.state.status === "menu";
     if (!guest && ((playing && this.state.status === "playing") || hostingWhilePaused || preview))
       this.updateZombies(dt, preview ? now / 1000 : this.elapsed, !preview);
@@ -4749,6 +4874,7 @@ export class NightfallEngine {
         run * (0.29 + Math.sin(this.stepPhase) * 0.09),
     );
     this.animateEquipment(dt);
+    this.updateGrenadeGuide(playing && this.state.status === "playing");
     this.animateReload();
     this.animateKnife();
     this.updateShotEffects(dt);
@@ -4898,7 +5024,7 @@ export class NightfallEngine {
     const scoped =
       this.state.aiming &&
       this.state.status === "playing" &&
-      this.state.weaponId === "marksman";
+      hasScope(this.state.weaponId);
     const p = this.state.reloadProgress ?? 0;
     const selected = this.state.weaponId;
     const swap = magazineReloadPose(p);

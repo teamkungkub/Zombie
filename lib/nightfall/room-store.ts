@@ -1,5 +1,5 @@
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import { knifeTuning } from "./equipment.ts";
+import { grenadeFlight, grenadePlayerDamage, knifeTuning } from "./equipment.ts";
 import { bosses, enemyTypes } from "./rules.ts";
 import { weapons, type WeaponId } from "./weapons.ts";
 import { zombieHitZones } from "./room-protocol.ts";
@@ -7,6 +7,7 @@ import type {
   CharacterId,
   RoomEvent,
   RoomFrame,
+  RoomGrenade,
   RoomPlayer,
   RoomPose,
   RoomSession,
@@ -35,6 +36,7 @@ export type StoredRoom = Omit<RoomView, "players"> & {
   members: Map<string, Member>;
   lastSeen: number;
   nextEvent: number;
+  grenades?: RoomGrenade[];
 };
 type Room = StoredRoom;
 
@@ -161,7 +163,8 @@ function frame(room: Room, member: Member, since = 0, session?: RoomSession): Ro
 }
 
 type PendingEvent = Omit<Extract<RoomEvent, { type: "damage" }>, "id"> |
-  Omit<Extract<RoomEvent, { type: "zombie-hit" }>, "id">;
+  Omit<Extract<RoomEvent, { type: "zombie-hit" }>, "id"> |
+  Omit<Extract<RoomEvent, { type: "grenade-thrown" }>, "id">;
 
 function deliver(room: Room, recipient: Member, event: PendingEvent) {
   recipient.events.push({ ...event, id: room.nextEvent++ });
@@ -186,17 +189,58 @@ function spendHit(member: Member) {
   return true;
 }
 
-function command(room: Room, member: Member, value: unknown) {
-  if (!object(value) || !integer(value.id, 1) || value.id <= member.lastCommand ||
-    !between(value.amount, 0.01, 10_000)) return;
+function throwGrenade(room: Room, member: Member, value: unknown, now: number) {
+  if (!member.pose || !object(value) || !between(value.x, -26, 26) || !between(value.y, -2, 12) ||
+    !between(value.z, -26, 26) || !between(value.yaw, -2 * Math.PI, 2 * Math.PI) || !between(value.pitch, -1.4, 1.4) ||
+    !between(value.charge, 0, 1) || !integer(value.wave, 1, 100_000) ||
+    (room.world?.wave !== undefined && value.wave !== room.world.wave) ||
+    (member.pose.wave !== undefined && value.wave !== member.pose.wave)) return;
+  const { x, y, z, yaw } = value;
+  if (Math.hypot(x - member.pose.x, y - member.pose.y, z - member.pose.z) > 7) return;
+  const active = room.grenades ??= [];
+  if (active.filter((grenade) => grenade.source === member.id && grenade.detonatesAt > now).length >= 3) return;
+  const grenade: RoomGrenade = {
+    id: room.nextEvent++, source: member.id, x, y, z, yaw,
+    pitch: value.pitch, charge: value.charge, wave: value.wave, detonatesAt: now + grenadeFlight.seconds * 1000,
+  };
+  active.push(grenade);
+  for (const recipient of room.members.values()) deliver(room, recipient, { type: "grenade-thrown", grenade });
+}
+
+function grenadeBlast(room: Room, member: Member, value: JsonObject, now: number) {
+  if (member.id !== room.hostId || !integer(value.grenadeId, 1) || !Array.isArray(value.targets) ||
+    value.targets.length > playerLimit || !between(value.x, -26, 26) || !between(value.y, 0.25, 12) ||
+    !between(value.z, -26, 26)) return;
+  const active = room.grenades;
+  const index = active?.findIndex(({ id }) => id === value.grenadeId) ?? -1;
+  if (index < 0 || !active) return;
+  const grenade = active[index];
+  if (now + 120 < grenade.detonatesAt || (room.world?.wave !== undefined && grenade.wave !== room.world.wave) ||
+    Math.hypot(value.x - grenade.x, value.z - grenade.z) > 18) return;
+  active.splice(index, 1);
+  for (const id of new Set(value.targets)) {
+    if (typeof id !== "string" || id === grenade.source || id === member.id) continue;
+    const recipient = room.members.get(id);
+    const pose = recipient?.pose;
+    if (!recipient || !pose?.alive || (pose.wave !== undefined && pose.wave !== grenade.wave)) continue;
+    const distance = Math.hypot(pose.x - value.x, pose.y - 0.9 - value.y, pose.z - value.z);
+    const amount = grenadePlayerDamage(distance);
+    if (amount > 0) deliver(room, recipient, { type: "damage", amount, source: grenade.source, cause: "grenade" });
+  }
+}
+
+function command(room: Room, member: Member, value: unknown, now: number) {
+  if (!object(value) || !integer(value.id, 1) || value.id <= member.lastCommand) return;
   member.lastCommand = value.id;
+  if (value.type === "throw-grenade") return throwGrenade(room, member, value.release, now);
+  if (value.type === "grenade-blast") return grenadeBlast(room, member, value, now);
+  if (!between(value.amount, 0.01, 10_000)) return;
   if (value.type === "hit-zombie") {
     if (room.hostId === member.id || !integer(value.target, 1)) return;
     const host = room.members.get(room.hostId);
     if (!host || (member.pose?.wave && member.pose.wave !== room.world?.wave)) return;
     const maximum = knownKey(weapons, value.weapon) ? weaponMaximum(value.weapon) :
-      value.weapon === "knife" ? knifeTuning.damage :
-      value.weapon === "grenade" ? 210 : 0;
+      value.weapon === "knife" ? knifeTuning.damage : 0;
     if (maximum > 0 && spendHit(member)) {
       const impact = knownKey(weapons, value.weapon) ? gunImpact(value.impact) : undefined;
       deliver(room, host, {
@@ -224,6 +268,7 @@ function command(room: Room, member: Member, value: unknown) {
 export function createRoomStore(rooms = new Map<string, StoredRoom>(), roomCode?: string) {
   function sweep(now: number) {
     for (const [code, room] of rooms) {
+      if (room.grenades?.length) room.grenades = room.grenades.filter(({ detonatesAt }) => detonatesAt + 8_000 >= now);
       for (const member of room.members.values()) {
         if (now - member.lastSeen >= presenceTimeout) member.pose = null;
       }
@@ -289,6 +334,7 @@ export function createRoomStore(rooms = new Map<string, StoredRoom>(), roomCode?
           room.round++;
           room.status = "playing";
           room.world = null;
+          room.grenades = [];
           for (const player of room.members.values()) {
             player.pose = null;
             player.events = [];
@@ -311,15 +357,16 @@ export function createRoomStore(rooms = new Map<string, StoredRoom>(), roomCode?
         member.events = member.events.filter((event) => event.id > since);
         if (room.status !== "playing") return frame(room, member, since);
         if (payload.pose) member.pose = payload.pose;
+        const world = owner && payload.world && (!room.world || payload.world.wave >= room.world.wave) ? payload.world : null;
+        if (world) room.world = world;
         if (member.pose?.alive) {
           member.hitCredits = Math.min(hitCreditsMax, member.hitCredits + Math.max(0, now - member.creditedAt) * 0.024);
           member.creditedAt = now;
-          for (const entry of payload.commands) command(room, member, entry);
         }
-        if (owner && payload.world && (!room.world || payload.world.wave >= room.world.wave)) {
-          room.world = payload.world;
-          if (room.world.finished) end(room);
+        for (const entry of payload.commands) {
+          if (member.pose?.alive || (owner && object(entry) && entry.type === "grenade-blast")) command(room, member, entry, now);
         }
+        if (world?.finished) end(room);
         return frame(room, member, since);
       }
       default:

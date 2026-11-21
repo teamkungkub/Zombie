@@ -4,6 +4,8 @@ export const weaponSlots = [
   "shotgun",
   "lmg",
   "marksman",
+  "arc",
+  "titan",
 ] as const;
 export type WeaponId = (typeof weaponSlots)[number];
 export type BonusWeapon = Exclude<WeaponId, "rifle">;
@@ -14,9 +16,28 @@ export const bossWeaponPools = {
   spores: ["marksman", "lmg", "shotgun"],
 } as const satisfies Record<string, readonly BonusWeapon[]>;
 
-export function rollBossWeapon(kind: keyof typeof bossWeaponPools, random = Math.random): BonusWeapon {
+export const rareBossDrops = {
+  arc: { minStage: 6, baseChance: 0.12, chancePerStage: 0.034, maxChance: 0.8 },
+  titan: { minStage: 13, baseChance: 0.16, chancePerStage: 0.024, maxChance: 0.72 },
+} as const;
+
+export function rollBossWeapon(kind: keyof typeof bossWeaponPools, stage: number, random = Math.random): BonusWeapon {
+  const { arc, titan } = rareBossDrops;
+  if (stage >= arc.minStage && random() < Math.min(arc.maxChance, arc.baseChance + (stage - arc.minStage) * arc.chancePerStage)) {
+    if (stage >= titan.minStage && random() < Math.min(titan.maxChance, titan.baseChance + (stage - titan.minStage) * titan.chancePerStage))
+      return "titan";
+    return "arc";
+  }
   const pool = bossWeaponPools[kind];
   return pool[Math.floor(random() * pool.length)];
+}
+
+export function isRareWeapon(id: WeaponId) {
+  return id === "arc" || id === "titan";
+}
+
+export function hasScope(id: WeaponId) {
+  return id === "marksman" || id === "titan";
 }
 export type Ammo = { ammo: number; reserve: number };
 export type Arsenal = Partial<Record<WeaponId, Ammo>>;
@@ -127,6 +148,42 @@ export const weapons = {
     sight: 38,
     fireFx: { recovery: 14, flash: 0.063, muzzleY: 0.035, portZ: -0.21, caseRadius: 0.014, caseLength: 0.061 },
   },
+  arc: {
+    name: "อาร์ก-9",
+    caliber: ".45 ARC",
+    capacity: 20,
+    pack: 10,
+    delay: 0.095,
+    reload: 2.55,
+    damage: 61,
+    head: 137,
+    pellets: 1,
+    spread: 0.012,
+    range: 95,
+    kick: 0.028,
+    auto: true,
+    muzzle: -1.16,
+    sight: 50,
+    fireFx: { recovery: 17, flash: 0.056, muzzleY: 0.035, portZ: -0.21, caseRadius: 0.013, caseLength: 0.056 },
+  },
+  titan: {
+    name: "ไททัน",
+    caliber: "13 MM TITAN",
+    capacity: 5,
+    pack: 5,
+    delay: 0.73,
+    reload: 2.8,
+    damage: 149,
+    head: 275,
+    pellets: 1,
+    spread: 0.0015,
+    range: 130,
+    kick: 0.052,
+    auto: false,
+    muzzle: -1.33,
+    sight: 35,
+    fireFx: { recovery: 14, flash: 0.075, muzzleY: 0.035, portZ: -0.22, caseRadius: 0.017, caseLength: 0.074 },
+  },
 } as const;
 
 export function collectWeapon(
@@ -154,6 +211,8 @@ export const dropRounds: Readonly<Record<WeaponId, number>> = {
   shotgun: 1,
   lmg: 4,
   marksman: 1,
+  arc: 1,
+  titan: 1,
 };
 
 export type AmmoDrop = { weaponId: WeaponId; rounds: number };
@@ -171,6 +230,7 @@ export function rollAmmoDrop(
 export function collectAmmoDrop(arsenal: Arsenal, drop: AmmoDrop) {
   const ammo = arsenal[drop.weaponId];
   if (!ammo) return false;
+  if (isRareWeapon(drop.weaponId) && ammo.reserve + drop.rounds > weapons[drop.weaponId].pack * 2) return false;
   ammo.reserve += drop.rounds;
   return true;
 }

@@ -4,6 +4,7 @@ const maxBytes = 64 * 1024;
 const headers = { "Cache-Control": "no-store" };
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   if (!request.headers.get("content-type")?.startsWith("application/json")) {
     return Response.json({ error: "Expected a JSON request." }, { status: 415, headers });
   }
@@ -35,5 +36,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON request." }, { status: 400, headers });
   }
   const { body: result, status } = await handleRoomRequest(input);
-  return Response.json(result, { status, headers });
+  const serverTime = Date.now();
+  return Response.json("room" in result ? { ...result, serverTime, serverProcessingMs: serverTime - startedAt } : result, { status, headers });
 }
