@@ -12,7 +12,19 @@ The game retries automatically after a network interruption and uses the same ro
 
 To play over a local network, run `npm run build` and `npm start -- --hostname 0.0.0.0`, then open the same host address on each device. The Node.js server stores rooms in `.nightfall-rooms/`, so a process restart retains them. Use one Node.js process for this file-backed setup.
 
-For Vercel, connect a Redis database shared by all instances and set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in the environment before deploying. The project also accepts `KV_REST_API_URL` and `KV_REST_API_TOKEN`. If the shared store is temporarily unavailable, the room API returns a retryable error.
+### Using Supabase for online rooms
+
+1. Open the Supabase project's **SQL Editor** and run [the room migration](../supabase/migrations/202611210001_nightfall_rooms.sql) once. Keep the project's Data API enabled.
+2. From the Supabase dashboard, copy the **Project URL** and a **Secret key** (starts with `sb_secret_`). In Vercel **Settings → Environment Variables**, set the following for the environment you deploy. For a local trial, set the same variables in `.env.local` and restart the dev server.
+
+   ```dotenv
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SECRET_KEY=sb_secret_your_key
+   ```
+
+3. Redeploy, then create a fresh room and join it from a second browser. Rooms created with local files or Redis do not transfer to the new store. Keep the secret server-side and out of Git.
+
+The existing Redis setup also works. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL` and `KV_REST_API_TOKEN`) without the Supabase variables to use Redis. A temporary storage outage returns a retryable error.
 
 ## Controls
 

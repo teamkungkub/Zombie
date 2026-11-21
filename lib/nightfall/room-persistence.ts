@@ -132,12 +132,50 @@ export function redisRoomStorage(url: string, token: string, namespace = "nightf
   };
 }
 
+export function supabaseRoomStorage(url: string, secret: string, namespace = "nightfall:room:v2"): RoomStorage {
+  const endpoint = `${url.replace(/\/+$/, "")}/rest/v1`;
+  const roomKey = (code: string) => `${namespace}:${code}`;
+  async function request(path: string, payload?: object): Promise<unknown> {
+    const response = await fetch(`${endpoint}/${path}`, {
+      method: payload ? "POST" : "GET",
+      headers: { apikey: secret, "Content-Type": "application/json" },
+      body: payload ? JSON.stringify(payload) : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!response.ok) throw new Error("Room storage request failed");
+    return response.json();
+  }
+  return {
+    async read(key) {
+      const query = new URLSearchParams({ select: "room_data", room_key: `eq.${roomKey(key)}` });
+      const rows = await request(`nightfall_rooms?${query}`);
+      if (!Array.isArray(rows)) throw new Error("Invalid room record");
+      if (rows.length === 0) return null;
+      if (rows.length !== 1 || typeof rows[0]?.room_data !== "string") throw new Error("Invalid room record");
+      return rows[0].room_data;
+    },
+    async compareAndSet(key, expected, next) {
+      const saved = await request("rpc/nightfall_room_compare_and_set", {
+        p_room_key: roomKey(key), p_expected: expected, p_next: next,
+      });
+      if (typeof saved !== "boolean") throw new Error("Invalid room update result");
+      return saved;
+    },
+  };
+}
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
 const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
-const storage = redisUrl && redisToken
-  ? redisRoomStorage(redisUrl, redisToken, `nightfall:${process.env.VERCEL_ENV ?? "local"}:room:v2`)
-  : process.env.VERCEL === "1" || redisUrl || redisToken
-    ? null
-    : fileRoomStorage(join(process.cwd(), ".nightfall-rooms"));
+const namespace = `nightfall:${process.env.VERCEL_ENV ?? "local"}:room:v2`;
+const storage = supabaseUrl || supabaseSecret
+  ? supabaseUrl && supabaseSecret ? supabaseRoomStorage(supabaseUrl, supabaseSecret, namespace) : null
+  : redisUrl && redisToken
+    ? redisRoomStorage(redisUrl, redisToken, namespace)
+    : process.env.VERCEL === "1" || redisUrl || redisToken
+      ? null
+      : fileRoomStorage(join(process.cwd(), ".nightfall-rooms"));
 
 export const handleRoomRequest = createPersistentRoomHandler(storage);

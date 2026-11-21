@@ -5,7 +5,7 @@ import { join as joinPath } from "node:path";
 import { test } from "node:test";
 import type { RoomFrame, RoomPose, RoomSession, RoomWorld } from "./room-protocol.ts";
 import { createRoomStore } from "./room-store.ts";
-import { createPersistentRoomHandler, fileRoomStorage } from "./room-persistence.ts";
+import { createPersistentRoomHandler, fileRoomStorage, supabaseRoomStorage } from "./room-persistence.ts";
 
 const hostPose: RoomPose = { x: 0, y: 1.7, z: 17, yaw: 0, pitch: 0, alive: true, shot: 0 };
 const guestPose: RoomPose = { ...hostPose, x: 2 };
@@ -151,4 +151,46 @@ test("a second room handler can recover persisted credentials and preserve concu
   assert.equal(unavailable.status, 503);
   assert.ok("code" in unavailable.body);
   assert.equal(unavailable.body.code, "ROOM_STORAGE_UNAVAILABLE");
+});
+
+test("Supabase room storage keeps credentials server-side and retries a concurrent write", async (t) => {
+  const records = new Map<string, string>();
+  const endpoint = "https://example.supabase.co/rest/v1";
+  const secret = "sb_secret_test";
+  let conflicts = 0;
+  t.mock.method(globalThis, "fetch", async (input: string, options: RequestInit) => {
+    assert.equal(new Headers(options.headers).get("apikey"), secret);
+    assert.equal(new Headers(options.headers).has("authorization"), false);
+    if (options.method === "GET") {
+      const url = new URL(input);
+      assert.equal(url.origin + url.pathname, endpoint + "/nightfall_rooms");
+      assert.equal(url.searchParams.get("select"), "room_data");
+      const key = url.searchParams.get("room_key")!.slice(3);
+      const record = records.get(key);
+      return Response.json(record === undefined ? [] : [{ room_data: record }]);
+    }
+    assert.equal(input, endpoint + "/rpc/nightfall_room_compare_and_set");
+    const { p_room_key, p_expected, p_next } = JSON.parse(options.body as string);
+    if ((records.get(p_room_key) ?? null) !== p_expected) {
+      conflicts++;
+      return Response.json(false);
+    }
+    if (p_next === null) records.delete(p_room_key);
+    else records.set(p_room_key, p_next);
+    return Response.json(true);
+  });
+  const handle = createPersistentRoomHandler(supabaseRoomStorage("https://example.supabase.co/", secret));
+  const opened = await handle({ action: "create", character: "vanguard" }, 1000);
+  assert.ok("session" in opened.body && opened.body.session);
+  const host = opened.body.session;
+  const second = createPersistentRoomHandler(supabaseRoomStorage("https://example.supabase.co", secret));
+  const joined = await Promise.all(["wraith", "ember"].map((character) =>
+    second({ action: "join", code: host.code, character }, 1100),
+  ));
+  assert.ok(joined.every((reply) => reply.status === 200));
+  assert.ok(conflicts > 0);
+  const state = await handle({ action: "start", session: host }, 1200);
+  assert.ok("room" in state.body);
+  assert.equal(state.body.room.players.length, 3);
+  assert.doesNotMatch(JSON.stringify(state.body), /sb_secret_test/);
 });
