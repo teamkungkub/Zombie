@@ -157,10 +157,7 @@ export default function RoomLobby({ mode, selected, ready, multiplayer, onSelect
 
         {mode === "room" && (
           <section className="room-controls" aria-label="จัดการห้อง">
-            <p className="room-friendly-fire">
-              <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Zm0 6v4m0 3v.5" /></svg>
-              เปิดการยิงโดนเพื่อน กระสุนสร้างความเสียหายให้คนในทีมได้
-            </p>
+            
             {inRoom ? (
               <>
                 <div className="room-code">
